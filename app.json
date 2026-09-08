@@ -1,16 +1,21 @@
 {
   "expo": {
-    "scheme": "acme",
-    "userInterfaceStyle": "automatic",
-    "orientation": "default",
-    "web": {
-      "output": "static"
+    "name": "Android Launcher",
+    "slug": "android-launcher",
+    "platforms": [
+      "android"
+    ],
+    "orientation": "portrait",
+    "android": {
+      "package": "com.milind.androidlauncher",
+      "userInterfaceStyle": "dark",
+      "backgroundColor": "#000000"
     },
     "plugins": [
-      "expo-router",
-      "expo-status-bar"
+      "expo-dev-client",
+      "./modules/launcher/app.plugin.js"
     ],
-    "name": "android-launcher",
-    "slug": "android-launcher"
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000"
   }
 }

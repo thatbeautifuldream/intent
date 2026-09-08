@@ -1,15 +1,16 @@
 {
   "name": "android-launcher",
   "version": "1.0.0",
-  "main": "expo-router/entry",
+  "main": "expo/AppEntry",
   "dependencies": {
-    "expo": "^57.0.1",
-    "expo-router": "~57.0.2",
-    "expo-status-bar": "~57.0.0",
+    "@expo/ui": "~57.0.16",
+    "expo": "~57.0.20",
+    "expo-dev-client": "~57.0.18",
+    "expo-linear-gradient": "~57.0.1",
+    "expo-system-ui": "~57.0.3",
     "react": "19.2.3",
-    "react-native": "0.86.0",
-    "tailwindcss": "~4.1.16",
-    "uniwind": "~1.0.0"
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.14",
@@ -17,9 +18,18 @@
   },
   "private": true,
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "prebuild": "expo prebuild --platform android",
+    "typecheck": "tsc --noEmit"
+  },
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-ui"
+        ]
+      }
+    }
   }
 }

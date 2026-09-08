@@ -10,6 +10,7 @@ web-build/
 expo-env.d.ts
 
 # Native
+/android
 *.orig.*
 *.jks
 *.p8
@@ -36,3 +37,10 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# argent
+.argent/
+
+# native module build output
+modules/*/android/build/
+modules/*/android/.cxx/

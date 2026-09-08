@@ -1,20 +1,22 @@
-# Expo Router and Uniwind 
+# Android Launcher
 
-Use [Expo Router](https://docs.expo.dev/router/introduction/) with [Uniwind](https://docs.uniwind.dev/) styling.
+Minimal Android launcher experiment built with Expo SDK 57, React Native, and TypeScript.
 
-## Launch your own
+## Run on a physical device
 
-[![Launch with Expo](https://github.com/expo/examples/blob/master/.gh-assets/launch.svg?raw=true)](https://launch.expo.dev/?github=https://github.com/expo/examples/tree/master/with-router-uniwind)
-
-## 🚀 How to use
+Install JDK 21, enable USB debugging, connect the device, and verify that `adb devices` lists it.
 
 ```sh
-npx create-expo-app -e with-router-uniwind
+pnpm install
+pnpm android --device
 ```
 
-## Deploy
+The Android command creates and installs a development build containing the local Kotlin module. Start Metro for later sessions with:
 
-Deploy on all platforms with Expo Application Services (EAS).
+```sh
+pnpm start
+```
 
-- Deploy the website: `npx eas-cli deploy` — [Learn more](https://docs.expo.dev/eas/hosting/get-started/)
-- Deploy on iOS and Android using: `npx eas-cli build` — [Learn more](https://expo.dev/eas)
+In the app, select **Set as home app** and approve **Android Launcher**. Press the device Home button to return to the React Native screen. Select any listed app to launch it.
+
+Native launcher behavior is contained in `modules/launcher`. Changes to Kotlin or the config plugin require rebuilding the Android app.
