@@ -1,13 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   Animated,
   AppState,
+  BackHandler,
   Easing,
   FlatList,
+  Keyboard,
   Pressable,
+  RefreshControl,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Button, Host, Text as NativeText } from "@expo/ui/jetpack-compose";
@@ -22,8 +27,17 @@ import LauncherModule, { type InstalledApp } from "./modules/launcher";
 const BACKGROUND = "#000000";
 const TOP_FADE = 56;
 const BOTTOM_FADE = 80;
+
+// Motion tokens: transitions.dev scale, applied to Animated instead of CSS.
+const EASE_SMOOTH_OUT = Easing.bezier(0.22, 1, 0.36, 1);
+const DURATION_MEDIUM = 350;
+const DURATION_SLOW = 400;
+const DURATION_VERY_SLOW = 420;
+const DISTANCE_MEDIUM = 12;
 const STAGGER_MS = 28;
 const MAX_STAGGERED = 14;
+
+
 
 export default function App() {
   return (
@@ -38,6 +52,11 @@ function Launcher() {
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [isDefault, setIsDefault] = useState(true);
   const [error, setError] = useState<string>();
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const reduceMotion = useReduceMotion();
+
+  const search = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     LauncherModule.getInstalledApps().then(setApps).catch(showError);
@@ -56,15 +75,64 @@ function Launcher() {
     return () => subscription.remove();
   }, []);
 
+  useEffect(() => {
+    if (!searching) {
+      return;
+    }
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        closeSearch();
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [searching]);
+
+  const results = useMemo(() => rank(apps, query), [apps, query]);
+
   function showError(reason: unknown) {
     setError(reason instanceof Error ? reason.message : String(reason));
   }
 
+  function openSearch() {
+    if (searching) {
+      return;
+    }
+    setSearching(true);
+    Animated.timing(search, {
+      toValue: 1,
+      duration: reduceMotion ? 0 : DURATION_SLOW,
+      easing: EASE_SMOOTH_OUT,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function closeSearch() {
+    Keyboard.dismiss();
+    Animated.timing(search, {
+      toValue: 0,
+      duration: reduceMotion ? 0 : DURATION_MEDIUM,
+      easing: EASE_SMOOTH_OUT,
+      useNativeDriver: true,
+    }).start(() => {
+      setSearching(false);
+      setQuery("");
+    });
+  }
+
   function launchApp(packageName: string) {
     LauncherModule.launchApp(packageName).catch(showError);
+    if (searching) {
+      closeSearch();
+    }
   }
 
   const footerHeight = insets.bottom + (isDefault ? 24 : 76);
+  const listPadding = {
+    paddingTop: insets.top + 24,
+    paddingBottom: footerHeight + 32,
+  };
 
   return (
     <View style={styles.screen}>
@@ -74,23 +142,118 @@ function Launcher() {
         barStyle="light-content"
       />
 
-      <FlatList
-        data={apps}
-        keyExtractor={(app) => app.packageName}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingTop: insets.top + 40,
-          paddingBottom: footerHeight + 32,
-        }}
-        ListEmptyComponent={<Text style={styles.empty}>No apps yet</Text>}
-        renderItem={({ item, index }) => (
-          <AppRow
-            name={item.name}
-            index={index}
-            onPress={() => launchApp(item.packageName)}
-          />
-        )}
-      />
+      <Animated.View
+        pointerEvents={searching ? "none" : "auto"}
+        style={[
+          styles.layer,
+          {
+            opacity: search.interpolate({
+              inputRange: [0, 1],
+              outputRange: [1, 0],
+            }),
+          },
+        ]}
+      >
+        <FlatList
+          data={apps}
+          keyExtractor={(app) => app.packageName}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={listPadding}
+          refreshControl={
+            <RefreshControl
+              refreshing={false}
+              onRefresh={openSearch}
+              colors={["transparent"]}
+              progressBackgroundColor="transparent"
+              progressViewOffset={insets.top}
+            />
+          }
+          ListHeaderComponent={
+            <Pressable accessibilityRole="search" onPress={openSearch}>
+              <Text style={styles.hint}>Search</Text>
+            </Pressable>
+          }
+          ListEmptyComponent={<Text style={styles.muted}>No apps yet</Text>}
+          renderItem={({ item, index }) => (
+            <AppRow
+              name={item.name}
+              delay={Math.min(index, MAX_STAGGERED) * STAGGER_MS}
+              reduceMotion={reduceMotion}
+              onPress={() => launchApp(item.packageName)}
+            />
+          )}
+        />
+      </Animated.View>
+
+      <Animated.View
+        pointerEvents={searching ? "auto" : "none"}
+        style={[
+          styles.layer,
+          {
+            opacity: search,
+            transform: [
+              {
+                translateY: search.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-DISTANCE_MEDIUM, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        {searching ? (
+          <>
+            <View style={[styles.field, { paddingTop: insets.top + 24 }]}>
+              <TextInput
+                autoFocus
+                value={query}
+                onChangeText={setQuery}
+                onSubmitEditing={() => {
+                  const first = results[0];
+                  if (first) {
+                    launchApp(first.packageName);
+                  }
+                }}
+                placeholder="Search"
+                placeholderTextColor="#5A5A5A"
+                selectionColor="#3A3A3A"
+                cursorColor="#F2F2F2"
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="go"
+                style={styles.input}
+              />
+              {query ? (
+                <Text style={styles.count}>
+                  {results.length} of {apps.length}
+                </Text>
+              ) : null}
+            </View>
+
+            <FlatList
+              data={results}
+              keyExtractor={(app) => app.packageName}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              contentContainerStyle={{ paddingBottom: footerHeight + 32 }}
+              ListEmptyComponent={
+                query ? <Text style={styles.muted}>No matches</Text> : null
+              }
+              renderItem={({ item }) => (
+                <AppRow
+                  name={item.name}
+                  delay={0}
+                  reduceMotion={reduceMotion}
+                  onPress={() => launchApp(item.packageName)}
+                />
+              )}
+            />
+          </>
+        ) : null}
+      </Animated.View>
 
       <LinearGradient
         pointerEvents="none"
@@ -107,7 +270,7 @@ function Launcher() {
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        {isDefault ? null : (
+        {isDefault || searching ? null : (
           <Host matchContents>
             <Button
               onClick={() => LauncherModule.requestHomeRole().catch(showError)}
@@ -127,11 +290,13 @@ function Launcher() {
 
 function AppRow({
   name,
-  index,
+  delay,
+  reduceMotion,
   onPress,
 }: {
   name: string;
-  index: number;
+  delay: number;
+  reduceMotion: boolean;
   onPress: () => void;
 }) {
   const enter = useRef(new Animated.Value(0)).current;
@@ -140,12 +305,13 @@ function AppRow({
   useEffect(() => {
     Animated.timing(enter, {
       toValue: 1,
-      duration: 420,
-      delay: Math.min(index, MAX_STAGGERED) * STAGGER_MS,
-      easing: Easing.bezier(0.22, 1, 0.36, 1),
+      duration: reduceMotion ? 0 : DURATION_VERY_SLOW,
+      delay: reduceMotion ? 0 : delay,
+      easing: EASE_SMOOTH_OUT,
       useNativeDriver: true,
     }).start();
-  }, [enter, index]);
+    // Entrance runs once per row; re-filtering must not replay it.
+  }, []);
 
   const opacity = Animated.multiply(
     enter,
@@ -203,10 +369,55 @@ function AppRow({
   );
 }
 
+function useReduceMotion() {
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      setReduceMotion,
+    );
+    return () => subscription.remove();
+  }, []);
+
+  return reduceMotion;
+}
+
+// Names that start with the query outrank names that merely contain it, so the
+// first result stays the one the enter key should launch.
+function rank(apps: InstalledApp[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return apps;
+  }
+
+  const starts: InstalledApp[] = [];
+  const contains: InstalledApp[] = [];
+
+  for (const app of apps) {
+    const name = app.name.toLowerCase();
+    if (name.startsWith(needle)) {
+      starts.push(app);
+    } else if (name.includes(needle)) {
+      contains.push(app);
+    }
+  }
+
+  return [...starts, ...contains];
+}
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: BACKGROUND,
+  },
+  layer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   row: {
     paddingHorizontal: 28,
@@ -218,7 +429,32 @@ const styles = StyleSheet.create({
     fontWeight: "300",
     letterSpacing: 0.2,
   },
-  empty: {
+  hint: {
+    paddingHorizontal: 28,
+    paddingBottom: 22,
+    color: "#5A5A5A",
+    fontSize: 13,
+    fontWeight: "300",
+    letterSpacing: 0.6,
+  },
+  field: {
+    paddingHorizontal: 28,
+    paddingBottom: 20,
+  },
+  input: {
+    padding: 0,
+    color: "#F2F2F2",
+    fontSize: 28,
+    fontWeight: "300",
+    letterSpacing: 0.2,
+  },
+  count: {
+    marginTop: 8,
+    color: "#5A5A5A",
+    fontSize: 12,
+    fontWeight: "300",
+  },
+  muted: {
     paddingHorizontal: 28,
     color: "#6B6B6B",
     fontSize: 16,
