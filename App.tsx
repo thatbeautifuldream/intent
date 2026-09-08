@@ -17,6 +17,7 @@ import {
   View,
 } from "react-native";
 import { Button, Host, Text as NativeText } from "@expo/ui/jetpack-compose";
+import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   SafeAreaProvider,
@@ -45,6 +46,12 @@ const BOTTOM_FADE = 120;
 // with mask-image; on a solid background a black gradient overlay is
 // equivalent, so this stays a LinearGradient rather than a native mask view.
 const SCROLL_FADE_REVEAL = 96;
+
+// A hairline scroll indicator that doubles as a scrubber. It scrolls freely —
+// only the haptic is quantised, ticking as the drag crosses into a new initial.
+const TRACK_WIDTH = 2;
+const THUMB_HEIGHT = 48;
+const SCRUBBER_TOUCH_WIDTH = 36;
 
 const EASE_SMOOTH_OUT = Easing.bezier(0.22, 1, 0.36, 1);
 // transitions.dev maps a position change to --duration-fast + --ease-smooth-out.
@@ -98,8 +105,12 @@ function Launcher() {
   // scroll methods, so keep a handle on whichever object actually has them.
   const listRef = useRef<FlatList<InstalledApp> | null>(null);
   const rowHeight = useRef(0);
-  const scrubberHeight = useRef(0);
-  const [scrubbing, setScrubbing] = useState<string>();
+  const [trackHeight, setTrackHeight] = useState(0);
+  // The thumb is a plain number: one source of truth, written by the scroll
+  // listener and by the drag, with no native/JS animated values to keep in sync.
+  const [thumbY, setThumbY] = useState(0);
+  const [scrubbing, setScrubbing] = useState<string | undefined>(undefined);
+  const scrubbingRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     LauncherModule.getInstalledApps().then(setApps).catch(showError);
@@ -161,10 +172,24 @@ function Launcher() {
 
   const scrubRef = useRef(scrubTo);
   scrubRef.current = scrubTo;
+  const endScrubRef = useRef(endScrub);
+  endScrubRef.current = endScrub;
 
   const onScroll = Animated.event(
     [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-    { useNativeDriver: true },
+    {
+      useNativeDriver: true,
+      listener: (event: { nativeEvent: { contentOffset: { y: number } } }) => {
+        if (scrubbingRef.current || !overflow || !trackHeight) {
+          return;
+        }
+        const progress = event.nativeEvent.contentOffset.y / overflow;
+        setThumbY(
+          Math.max(0, Math.min(1, progress)) *
+            Math.max(0, trackHeight - THUMB_HEIGHT),
+        );
+      },
+    },
   );
 
   const topFade = overflow
@@ -215,16 +240,28 @@ function Launcher() {
   }, [ordered]);
 
   function scrubTo(y: number) {
-    if (!letters.length || !scrubberHeight.current || !rowHeight.current) {
+    if (!trackHeight || !rowHeight.current || !ordered.length) {
       return;
     }
 
-    const slot = Math.floor((y / scrubberHeight.current) * letters.length);
-    const [letter, index] = letters[Math.max(0, Math.min(letters.length - 1, slot))];
+    const travel = Math.max(0, trackHeight - THUMB_HEIGHT);
+    setThumbY(Math.max(0, Math.min(travel, y - THUMB_HEIGHT / 2)));
+
+    const offset = Math.max(0, Math.min(1, y / trackHeight)) * overflow;
+    const index = Math.max(
+      0,
+      Math.min(ordered.length - 1, Math.round(offset / rowHeight.current)),
+    );
+    const initial = ordered[index].name[0]?.toUpperCase() ?? "#";
+    const letter = initial >= "A" && initial <= "Z" ? initial : "#";
+
+    if (letter !== scrubbingRef.current) {
+      scrubbingRef.current = letter;
+      Haptics.selectionAsync().catch(() => {});
+    }
 
     setScrubbing(letter);
 
-    const offset = index * rowHeight.current;
     const list = listRef.current as unknown as {
       scrollToOffset?: (options: { offset: number; animated: boolean }) => void;
       getScrollResponder?: () => {
@@ -239,14 +276,19 @@ function Launcher() {
     }
   }
 
+  function endScrub() {
+    scrubbingRef.current = undefined;
+    setScrubbing(undefined);
+  }
+
   const scrubber = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: (event) => scrubRef.current(event.nativeEvent.locationY),
       onPanResponderMove: (event) => scrubRef.current(event.nativeEvent.locationY),
-      onPanResponderRelease: () => setScrubbing(undefined),
-      onPanResponderTerminate: () => setScrubbing(undefined),
+      onPanResponderRelease: () => endScrubRef.current(),
+      onPanResponderTerminate: () => endScrubRef.current(),
     }),
   ).current;
 
@@ -325,25 +367,25 @@ function Launcher() {
         <View
           {...scrubber.panHandlers}
           pointerEvents="box-only"
-          onLayout={(event) =>
-            (scrubberHeight.current = event.nativeEvent.layout.height)
-          }
+          onLayout={(event) => setTrackHeight(event.nativeEvent.layout.height)}
           style={[
             styles.scrubber,
             { top: insets.top + 40, bottom: footerHeight + 24 },
           ]}
         >
-          {letters.map(([letter]) => (
-            <Text
-              key={letter}
-              style={[
-                styles.letter,
-                letter === scrubbing && styles.letterActive,
-              ]}
-            >
-              {letter}
+          <View style={styles.track} />
+          <View
+            style={[
+              styles.thumb,
+              scrubbing ? styles.thumbActive : null,
+              { top: thumbY },
+            ]}
+          />
+          {scrubbing ? (
+            <Text style={[styles.scrubbingLetter, { top: thumbY }]}>
+              {scrubbing}
             </Text>
-          ))}
+          ) : null}
         </View>
       ) : null}
 
@@ -608,18 +650,36 @@ const styles = StyleSheet.create({
   scrubber: {
     position: "absolute",
     right: 0,
-    width: 34,
-    justifyContent: "space-evenly",
-    alignItems: "center",
+    width: SCRUBBER_TOUCH_WIDTH,
+    alignItems: "flex-end",
+    paddingRight: 14,
   },
-  letter: {
-    color: "#4A4A4A",
-    fontSize: 10,
-    fontWeight: "300",
-    letterSpacing: 0.4,
+  track: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: 14,
+    width: TRACK_WIDTH,
+    backgroundColor: "#1C1C1C",
   },
-  letterActive: {
+  thumb: {
+    position: "absolute",
+    right: 14,
+    width: TRACK_WIDTH,
+    height: THUMB_HEIGHT,
+    backgroundColor: "#3A3A3A",
+  },
+  thumbActive: {
+    backgroundColor: "#F2F2F2",
+  },
+  scrubbingLetter: {
+    position: "absolute",
+    right: 28,
+    height: THUMB_HEIGHT,
+    lineHeight: THUMB_HEIGHT,
     color: "#F2F2F2",
+    fontSize: 21,
+    fontWeight: "300",
   },
   footer: {
     position: "absolute",
