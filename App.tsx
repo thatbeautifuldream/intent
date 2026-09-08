@@ -169,11 +169,6 @@ function Launcher() {
               progressViewOffset={insets.top}
             />
           }
-          ListHeaderComponent={
-            <Pressable accessibilityRole="search" onPress={openSearch}>
-              <Text style={styles.hint}>Search</Text>
-            </Pressable>
-          }
           ListEmptyComponent={<Text style={styles.muted}>No apps yet</Text>}
           renderItem={({ item, index }) => (
             <AppRow
@@ -428,14 +423,6 @@ const styles = StyleSheet.create({
     fontSize: 21,
     fontWeight: "300",
     letterSpacing: 0.2,
-  },
-  hint: {
-    paddingHorizontal: 28,
-    paddingBottom: 22,
-    color: "#5A5A5A",
-    fontSize: 13,
-    fontWeight: "300",
-    letterSpacing: 0.6,
   },
   field: {
     paddingHorizontal: 28,
