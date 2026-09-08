@@ -4,6 +4,7 @@ import {
   AccessibilityInfo,
   Animated,
   AppState,
+  BackHandler,
   Easing,
   FlatList,
   type FlatListProps,
@@ -62,6 +63,17 @@ function Launcher() {
   const scrollY = useRef(new Animated.Value(0)).current;
   const [overflow, setOverflow] = useState(0);
   const metrics = useRef({ content: 0, layout: 0 });
+
+  // Back is inert on a launcher. Without this React Native falls through to
+  // the activity's default back handling, which finishes the home task; the
+  // system then relaunches home as a new task, restarting the launcher.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => true,
+    );
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     LauncherModule.getInstalledApps().then(setApps).catch(showError);
