@@ -56,7 +56,6 @@ const REORDER_ANIMATION = {
   delete: { type: LayoutAnimation.Types.easeOut, property: LayoutAnimation.Properties.opacity },
   create: { type: LayoutAnimation.Types.easeOut, property: LayoutAnimation.Properties.opacity },
 };
-const DURATION_VERY_SLOW = 420;
 
 // A right swipe slides the row aside to uncover the actions beneath it, so the
 // travel is exactly their footprint: two Material 48dp touch targets with
@@ -66,8 +65,6 @@ const ACTION_INSET = 12;
 const ACTION_COUNT = 2;
 const ACTION_WIDTH = ACTION_INSET * 2 + ACTION_SIZE * ACTION_COUNT;
 const SWIPE_THRESHOLD = ACTION_WIDTH / 2;
-const STAGGER_MS = 28;
-const MAX_STAGGERED = 14;
 
 const AnimatedFlatList = Animated.FlatList as unknown as React.ComponentType<
   FlatListProps<InstalledApp>
@@ -235,10 +232,9 @@ function Launcher() {
         onScroll={onScroll}
         onContentSizeChange={(_width, height) => measure({ content: height })}
         ListEmptyComponent={<Text style={styles.muted}>No apps yet</Text>}
-        renderItem={({ item, index }) => (
+        renderItem={({ item }) => (
           <AppRow
             name={item.name}
-            delay={Math.min(index, MAX_STAGGERED) * STAGGER_MS}
             reduceMotion={reduceMotion}
             isPinned={pinned.includes(item.packageName)}
             isOpen={openRow === item.packageName}
@@ -296,7 +292,6 @@ function Launcher() {
 
 function AppRow({
   name,
-  delay,
   reduceMotion,
   isPinned,
   isOpen,
@@ -307,7 +302,6 @@ function AppRow({
   onPress,
 }: {
   name: string;
-  delay: number;
   reduceMotion: boolean;
   isPinned: boolean;
   isOpen: boolean;
@@ -317,21 +311,9 @@ function AppRow({
   onInfo: () => void;
   onPress: () => void;
 }) {
-  const enter = useRef(new Animated.Value(0)).current;
   const press = useRef(new Animated.Value(0)).current;
   const slide = useRef(new Animated.Value(0)).current;
   const open = useRef(false);
-
-  useEffect(() => {
-    Animated.timing(enter, {
-      toValue: 1,
-      duration: reduceMotion ? 0 : DURATION_VERY_SLOW,
-      delay: reduceMotion ? 0 : delay,
-      easing: EASE_SMOOTH_OUT,
-      useNativeDriver: true,
-    }).start();
-    // Entrance runs once per row.
-  }, []);
 
   useEffect(() => {
     open.current = isOpen;
@@ -438,14 +420,7 @@ function AppRow({
             style={[
               styles.row,
               {
-                opacity: enter,
                 transform: [
-                  {
-                    translateY: enter.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [16, 0],
-                    }),
-                  },
                   {
                     scale: press.interpolate({
                       inputRange: [0, 1],
