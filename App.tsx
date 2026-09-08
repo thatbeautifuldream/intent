@@ -148,14 +148,37 @@ function Launcher() {
 
   // No overflow, no fade — the same rule the CSS utility follows.
   function measure(next: Partial<{ content: number; layout: number }>) {
-    metrics.current = { ...metrics.current, ...next };
-    const { content, layout } = metrics.current;
-    setOverflow(Math.max(0, content - layout));
+    const merged = { ...metrics.current, ...next };
+
+    if (
+      merged.content === metrics.current.content &&
+      merged.layout === metrics.current.layout
+    ) {
+      return;
+    }
+
+    metrics.current = merged;
+    setOverflow(Math.max(0, merged.content - merged.layout));
   }
 
   const onScroll = Animated.event(
     [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-    { useNativeDriver: true },
+    {
+      useNativeDriver: true,
+      // The scroll event is the authoritative source for both sizes. The list's
+      // own onLayout reports a height that is not the viewport, which left the
+      // bottom fade computing against a scroll range several times too large.
+      listener: (event: {
+        nativeEvent: {
+          contentSize: { height: number };
+          layoutMeasurement: { height: number };
+        };
+      }) =>
+        measure({
+          content: event.nativeEvent.contentSize.height,
+          layout: event.nativeEvent.layoutMeasurement.height,
+        }),
+    },
   );
 
   const topFade = overflow
@@ -190,7 +213,10 @@ function Launcher() {
   const footerHeight = insets.bottom + (isDefault ? 24 : 76);
 
   return (
-    <View style={styles.screen}>
+    <View
+      style={styles.screen}
+      onLayout={(event) => measure({ layout: event.nativeEvent.layout.height })}
+    >
       <StatusBar
         translucent
         backgroundColor="transparent"
@@ -207,9 +233,6 @@ function Launcher() {
         }}
         scrollEventThrottle={16}
         onScroll={onScroll}
-        onLayout={(event) =>
-          measure({ layout: event.nativeEvent.layout.height })
-        }
         onContentSizeChange={(_width, height) => measure({ content: height })}
         ListEmptyComponent={<Text style={styles.muted}>No apps yet</Text>}
         renderItem={({ item, index }) => (
