@@ -26,7 +26,7 @@ import LauncherModule, { type InstalledApp } from "./modules/launcher";
 
 const BACKGROUND = "#000000";
 const TOP_FADE = 56;
-const BOTTOM_FADE = 80;
+const BOTTOM_FADE = 120;
 
 // Motion tokens: transitions.dev scale, applied to Animated instead of CSS.
 const EASE_SMOOTH_OUT = Easing.bezier(0.22, 1, 0.36, 1);
@@ -128,9 +128,9 @@ function Launcher() {
     }
   }
 
-  const footerHeight = insets.bottom + (isDefault ? 24 : 76);
+  const footerHeight = insets.bottom + (isDefault ? 68 : 120);
   const listPadding = {
-    paddingTop: insets.top + 52,
+    paddingTop: insets.top + 24,
     paddingBottom: footerHeight + 32,
   };
 
@@ -263,29 +263,6 @@ function Launcher() {
         style={[styles.fade, { bottom: 0, height: insets.bottom + BOTTOM_FADE }]}
       />
 
-      <Animated.View
-        pointerEvents={searching ? "none" : "auto"}
-        style={[
-          styles.searchButton,
-          {
-            top: insets.top + 6,
-            opacity: search.interpolate({
-              inputRange: [0, 1],
-              outputRange: [1, 0],
-            }),
-          },
-        ]}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Search apps"
-          hitSlop={12}
-          onPress={openSearch}
-        >
-          <Text style={styles.searchLabel}>Search</Text>
-        </Pressable>
-      </Animated.View>
-
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {isDefault || searching ? null : (
@@ -301,6 +278,35 @@ function Launcher() {
             </Button>
           </Host>
         )}
+        <View style={styles.searchButton}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={searching ? "Close search" : "Search apps"}
+            hitSlop={16}
+            onPress={searching ? closeSearch : openSearch}
+          >
+            <View>
+              <Animated.Text
+                style={[
+                  styles.searchLabel,
+                  {
+                    opacity: search.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 0],
+                    }),
+                  },
+                ]}
+              >
+                Search
+              </Animated.Text>
+              <Animated.Text
+                style={[styles.searchLabel, styles.searchLabelSwap, { opacity: search }]}
+              >
+                Close
+              </Animated.Text>
+            </View>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -475,11 +481,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
+  // Bottom-right keeps the visible entry point inside the thumb's reach on a
+  // large phone; the top corners are the hardest place to hit one-handed.
   searchButton: {
-    position: "absolute",
-    right: 16,
+    alignSelf: "flex-end",
+    marginTop: 16,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
+  },
+  searchLabelSwap: {
+    position: "absolute",
+    top: 0,
+    right: 0,
   },
   searchLabel: {
     color: "#8A8A8A",
@@ -492,7 +505,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingHorizontal: 24,
+    paddingHorizontal: 16,
     alignItems: "center",
   },
   error: {
