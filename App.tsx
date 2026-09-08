@@ -89,6 +89,8 @@ export default function App() {
 function Launcher() {
   const insets = useSafeAreaInsets();
   const [apps, setApps] = useState<InstalledApp[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [hasNotificationAccess, setHasNotificationAccess] = useState(true);
   const [pinned, setPinned] = useState<string[]>([]);
   const [openRow, setOpenRow] = useState<string>();
   const [isDefault, setIsDefault] = useState(true);
@@ -110,8 +112,11 @@ function Launcher() {
   }, []);
 
   useEffect(() => {
-    const check = () =>
+    const check = () => {
       LauncherModule.isDefaultLauncher().then(setIsDefault).catch(showError);
+      setHasNotificationAccess(LauncherModule.hasNotificationAccess());
+      setCounts(LauncherModule.getNotificationCounts());
+    };
 
     check();
     const subscription = AppState.addEventListener("change", (status) => {
@@ -119,6 +124,14 @@ function Launcher() {
         check();
       }
     });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    const subscription = LauncherModule.addListener(
+      "onNotificationsChanged",
+      (payload) => setCounts(payload.counts),
+    );
     return () => subscription.remove();
   }, []);
 
@@ -191,7 +204,21 @@ function Launcher() {
     return [...top, ...rest];
   }, [apps, pinned]);
 
-  const footerHeight = insets.bottom + (isDefault ? 24 : 76);
+  // One-time setup prompts share the footer slot and retire once satisfied.
+  const setup = !isDefault
+    ? {
+        label: "Set as default",
+        onPress: () => LauncherModule.requestHomeRole().catch(showError),
+      }
+    : !hasNotificationAccess
+      ? {
+          label: "Show notifications",
+          onPress: () =>
+            LauncherModule.requestNotificationAccess().catch(showError),
+        }
+      : undefined;
+
+  const footerHeight = insets.bottom + (setup ? 76 : 24);
 
   return (
     <View style={styles.screen}>
@@ -221,6 +248,7 @@ function Launcher() {
             name={item.name}
             delay={Math.min(index, MAX_STAGGERED) * STAGGER_MS}
             reduceMotion={reduceMotion}
+            count={counts[item.packageName] ?? 0}
             isPinned={pinned.includes(item.packageName)}
             isOpen={openRow === item.packageName}
             onOpen={() => setOpenRow(item.packageName)}
@@ -257,19 +285,19 @@ function Launcher() {
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        {isDefault ? null : (
+        {setup ? (
           <Host matchContents>
             <Button
-              onClick={() => LauncherModule.requestHomeRole().catch(showError)}
+              onClick={setup.onPress}
               colors={{ containerColor: "#141414", contentColor: "#9A9A9A" }}
               contentPadding={{ start: 20, end: 20, top: 6, bottom: 6 }}
             >
               <NativeText style={{ fontSize: 13, letterSpacing: 0.2 }}>
-                Set as default
+                {setup.label}
               </NativeText>
             </Button>
           </Host>
-        )}
+        ) : null}
       </View>
     </View>
   );
@@ -277,6 +305,7 @@ function Launcher() {
 
 function AppRow({
   name,
+  count,
   delay,
   reduceMotion,
   isPinned,
@@ -288,6 +317,7 @@ function AppRow({
   onPress,
 }: {
   name: string;
+  count: number;
   delay: number;
   reduceMotion: boolean;
   isPinned: boolean;
@@ -432,12 +462,16 @@ function AppRow({
               },
             ]}
           >
-            <Animated.Text
-              numberOfLines={1}
-              style={[styles.name, { opacity: dim }]}
-            >
-              {name}
-            </Animated.Text>
+            <Animated.View style={[styles.label, { opacity: dim }]}>
+              <Text numberOfLines={1} style={styles.name}>
+                {name}
+              </Text>
+              {count ? (
+                <Text style={styles.count}>
+                  {count === 1 ? "*" : `(${count})`}
+                </Text>
+              ) : null}
+            </Animated.View>
           </Animated.View>
         </Pressable>
       </Animated.View>
@@ -481,11 +515,23 @@ const styles = StyleSheet.create({
     width: ACTION_SIZE * ACTION_COUNT,
     height: ACTION_SIZE,
   },
+  label: {
+    flexDirection: "row",
+    alignItems: "baseline",
+  },
   name: {
     color: "#F2F2F2",
     fontSize: 21,
     fontWeight: "300",
     letterSpacing: 0.2,
+    flexShrink: 1,
+  },
+  count: {
+    marginLeft: 8,
+    color: "#8A8A8A",
+    fontSize: 14,
+    fontWeight: "300",
+    fontVariant: ["tabular-nums"],
   },
   muted: {
     paddingHorizontal: 28,

@@ -1,6 +1,7 @@
 package expo.modules.launcher
 
 import android.app.role.RoleManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -21,6 +22,38 @@ import java.util.Locale
 class LauncherModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LauncherModule")
+
+    Events("onNotificationsChanged")
+
+    OnStartObserving {
+      NotificationTracker.onChange = { counts ->
+        sendEvent("onNotificationsChanged", mapOf("counts" to counts))
+      }
+    }
+
+    OnStopObserving {
+      NotificationTracker.onChange = null
+    }
+
+    Function("getNotificationCounts") {
+      NotificationTracker.snapshot()
+    }
+
+    Function("hasNotificationAccess") {
+      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      val listeners = Settings.Secure.getString(
+        context.contentResolver,
+        "enabled_notification_listeners"
+      )
+      listeners?.split(":")?.any { entry ->
+        ComponentName.unflattenFromString(entry)?.packageName == context.packageName
+      } == true
+    }
+
+    AsyncFunction("requestNotificationAccess") {
+      val activity = appContext.throwingActivity
+      activity.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("getInstalledApps") {
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
