@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Android Launcher",
-    "slug": "android-launcher",
+    "name": "Intent",
+    "slug": "intent",
     "platforms": [
       "android"
     ],
     "orientation": "portrait",
     "android": {
-      "package": "com.milind.androidlauncher",
+      "package": "com.milind.intent",
       "userInterfaceStyle": "dark",
       "backgroundColor": "#000000"
     },
