@@ -7,6 +7,7 @@ import {
   Easing,
   FlatList,
   type FlatListProps,
+  Image,
   LayoutAnimation,
   PanResponder,
   Pressable,
@@ -15,14 +16,7 @@ import {
   Text,
   View,
 } from "react-native";
-import {
-  Button,
-  Host,
-  Icon,
-  IconButton,
-  Text as NativeText,
-  Row,
-} from "@expo/ui/jetpack-compose";
+import { Button, Host, Text as NativeText } from "@expo/ui/jetpack-compose";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   SafeAreaProvider,
@@ -34,9 +28,11 @@ import Store from "expo-sqlite/kv-store";
 import LauncherModule, { type InstalledApp } from "./modules/launcher";
 
 const PINNED_KEY = "pinned-apps";
-const PIN_ICON = require("./assets/icons/pin.xml");
-const UNPIN_ICON = require("./assets/icons/unpin.xml");
-const INFO_ICON = require("./assets/icons/info.xml");
+// Android drawable resources, shipped by the config plugin rather than the
+// bundler, so they resolve identically in development and in a release build.
+const PIN_ICON = { uri: "ic_pin" };
+const UNPIN_ICON = { uri: "ic_unpin" };
+const INFO_ICON = { uri: "ic_info" };
 
 const BACKGROUND = "#000000";
 const TOP_FADE = 56;
@@ -339,7 +335,8 @@ function AppRow({
   const swipe = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_event, gesture) =>
-        Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
+        Math.abs(gesture.dx) > 12 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
       onPanResponderMove: (_event, gesture) => {
         const base = open.current ? ACTION_WIDTH : 0;
         slide.setValue(
@@ -364,26 +361,30 @@ function AppRow({
   return (
     <View>
       <View style={styles.action}>
-        <Host style={styles.actionHost}>
-          <Row verticalAlignment="center">
-            <IconButton onClick={onPin}>
-              <Icon
-                source={isPinned ? UNPIN_ICON : PIN_ICON}
-                size={20}
-                tint="#8A8A8A"
-                contentDescription={isPinned ? `Unpin ${name}` : `Pin ${name}`}
-              />
-            </IconButton>
-            <IconButton onClick={onInfo}>
-              <Icon
-                source={INFO_ICON}
-                size={20}
-                tint="#8A8A8A"
-                contentDescription={`App info for ${name}`}
-              />
-            </IconButton>
-          </Row>
-        </Host>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={isPinned ? `Unpin ${name}` : `Pin ${name}`}
+          onPress={onPin}
+          style={styles.actionTarget}
+        >
+          <Image
+            source={isPinned ? UNPIN_ICON : PIN_ICON}
+            style={styles.actionIcon}
+            tintColor="#8A8A8A"
+          />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`App info for ${name}`}
+          onPress={onInfo}
+          style={styles.actionTarget}
+        >
+          <Image
+            source={INFO_ICON}
+            style={styles.actionIcon}
+            tintColor="#8A8A8A"
+          />
+        </Pressable>
       </View>
 
       <Animated.View
@@ -475,11 +476,18 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     left: ACTION_INSET,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  actionTarget: {
+    width: ACTION_SIZE,
+    height: ACTION_SIZE,
+    alignItems: "center",
     justifyContent: "center",
   },
-  actionHost: {
-    width: ACTION_SIZE * ACTION_COUNT,
-    height: ACTION_SIZE,
+  actionIcon: {
+    width: 20,
+    height: 20,
   },
   name: {
     color: "#F2F2F2",

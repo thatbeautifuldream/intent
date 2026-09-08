@@ -1,15 +1,52 @@
+const fs = require("fs");
+const path = require("path");
+
 const {
   AndroidConfig,
   withAndroidManifest,
   withAndroidStyles,
+  withDangerousMod,
   withMainActivity,
 } = require("expo/config-plugins");
 
 const INERT_BACK_MARKER = "// launcher: back is inert";
 
 module.exports = function withLauncher(config) {
-  return withInertBack(withOpaqueWindow(withHomeIntent(config)));
+  return withVectorIcons(withInertBack(withOpaqueWindow(withHomeIntent(config))));
 };
+
+// Metro serves `.xml` vector drawables over HTTP in development but does not
+// package them into a release APK, so icons required through the bundler draw
+// nothing once the app ships. Copying them into res/drawable makes them real
+// Android resources, available on a cold start with no bundler involved.
+function withVectorIcons(config) {
+  return withDangerousMod(config, [
+    "android",
+    (config) => {
+      const from = path.join(config.modRequest.projectRoot, "assets", "icons");
+      const to = path.join(
+        config.modRequest.platformProjectRoot,
+        "app/src/main/res/drawable",
+      );
+
+      fs.mkdirSync(to, { recursive: true });
+
+      for (const file of fs.readdirSync(from)) {
+        if (!file.endsWith(".xml")) {
+          continue;
+        }
+        const source = fs
+          .readFileSync(path.join(from, file), "utf8")
+          // The theme attribute needs an AppCompat context to resolve; every
+          // icon is tinted explicitly at the call site anyway.
+          .replace(/\s*android:tint="\?attr\/[^"]*"/, "");
+        fs.writeFileSync(path.join(to, `ic_${file}`), source);
+      }
+
+      return config;
+    },
+  ]);
+}
 
 // The launcher owns the root of the home task, so letting back finish the
 // activity destroys the task and the system relaunches the launcher from
