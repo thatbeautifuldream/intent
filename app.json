@@ -13,7 +13,8 @@
     },
     "plugins": [
       "expo-dev-client",
-      "./modules/launcher/app.plugin.js"
+      "./modules/launcher/app.plugin.js",
+      "expo-sqlite"
     ],
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000"

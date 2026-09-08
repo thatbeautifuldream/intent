@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -7,20 +7,34 @@ import {
   Easing,
   FlatList,
   type FlatListProps,
+  LayoutAnimation,
+  PanResponder,
   Pressable,
   StatusBar,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { Button, Host, Text as NativeText } from "@expo/ui/jetpack-compose";
+import {
+  Button,
+  Host,
+  Icon,
+  IconButton,
+  Text as NativeText,
+} from "@expo/ui/jetpack-compose";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
+import Store from "expo-sqlite/kv-store";
+
 import LauncherModule, { type InstalledApp } from "./modules/launcher";
+
+const PINNED_KEY = "pinned-apps";
+const PIN_ICON = require("./assets/icons/pin.xml");
+const UNPIN_ICON = require("./assets/icons/unpin.xml");
 
 const BACKGROUND = "#000000";
 const TOP_FADE = 56;
@@ -35,7 +49,24 @@ const BOTTOM_FADE = 120;
 const SCROLL_FADE_REVEAL = 96;
 
 const EASE_SMOOTH_OUT = Easing.bezier(0.22, 1, 0.36, 1);
+// transitions.dev maps a position change to --duration-fast + --ease-smooth-out.
+// LayoutAnimation only exposes named curves, so easeOut stands in for the bezier.
+const DURATION_FAST = 250;
+const REORDER_ANIMATION = {
+  duration: DURATION_FAST,
+  update: { type: LayoutAnimation.Types.easeOut },
+  delete: { type: LayoutAnimation.Types.easeOut, property: LayoutAnimation.Properties.opacity },
+  create: { type: LayoutAnimation.Types.easeOut, property: LayoutAnimation.Properties.opacity },
+};
 const DURATION_VERY_SLOW = 420;
+
+// A right swipe slides the row aside to uncover the pin action beneath it, so
+// the travel is exactly the action's footprint: a Material 48dp touch target
+// with matching margins either side.
+const ACTION_SIZE = 48;
+const ACTION_INSET = 12;
+const ACTION_WIDTH = ACTION_INSET * 2 + ACTION_SIZE;
+const SWIPE_THRESHOLD = ACTION_WIDTH / 2;
 const STAGGER_MS = 28;
 const MAX_STAGGERED = 14;
 
@@ -55,6 +86,8 @@ export default function App() {
 function Launcher() {
   const insets = useSafeAreaInsets();
   const [apps, setApps] = useState<InstalledApp[]>([]);
+  const [pinned, setPinned] = useState<string[]>([]);
+  const [openRow, setOpenRow] = useState<string>();
   const [isDefault, setIsDefault] = useState(true);
   const [error, setError] = useState<string>();
   const reduceMotion = useReduceMotion();
@@ -65,6 +98,12 @@ function Launcher() {
 
   useEffect(() => {
     LauncherModule.getInstalledApps().then(setApps).catch(showError);
+  }, []);
+
+  useEffect(() => {
+    Store.getItem(PINNED_KEY)
+      .then((stored) => setPinned(stored ? JSON.parse(stored) : []))
+      .catch(showError);
   }, []);
 
   useEffect(() => {
@@ -86,6 +125,21 @@ function Launcher() {
 
   function launchApp(packageName: string) {
     LauncherModule.launchApp(packageName).catch(showError);
+  }
+
+  // Most recently pinned first, so a freshly pinned app lands at the very top.
+  function togglePin(packageName: string) {
+    const next = pinned.includes(packageName)
+      ? pinned.filter((name) => name !== packageName)
+      : [packageName, ...pinned];
+
+    if (!reduceMotion) {
+      LayoutAnimation.configureNext(REORDER_ANIMATION);
+    }
+
+    setPinned(next);
+    setOpenRow(undefined);
+    Store.setItem(PINNED_KEY, JSON.stringify(next)).catch(showError);
   }
 
   // No overflow, no fade — the same rule the CSS utility follows.
@@ -119,6 +173,16 @@ function Launcher() {
       })
     : 0;
 
+  const ordered = useMemo(() => {
+    const byPackage = new Map(apps.map((app) => [app.packageName, app]));
+    const top = pinned
+      .map((packageName) => byPackage.get(packageName))
+      .filter((app): app is InstalledApp => Boolean(app));
+    const rest = apps.filter((app) => !pinned.includes(app.packageName));
+
+    return [...top, ...rest];
+  }, [apps, pinned]);
+
   const footerHeight = insets.bottom + (isDefault ? 24 : 76);
 
   return (
@@ -130,7 +194,7 @@ function Launcher() {
       />
 
       <AnimatedFlatList
-        data={apps}
+        data={ordered}
         keyExtractor={(app) => app.packageName}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
@@ -149,6 +213,11 @@ function Launcher() {
             name={item.name}
             delay={Math.min(index, MAX_STAGGERED) * STAGGER_MS}
             reduceMotion={reduceMotion}
+            isPinned={pinned.includes(item.packageName)}
+            isOpen={openRow === item.packageName}
+            onOpen={() => setOpenRow(item.packageName)}
+            onClose={() => setOpenRow(undefined)}
+            onPin={() => togglePin(item.packageName)}
             onPress={() => launchApp(item.packageName)}
           />
         )}
@@ -201,15 +270,27 @@ function AppRow({
   name,
   delay,
   reduceMotion,
+  isPinned,
+  isOpen,
+  onOpen,
+  onClose,
+  onPin,
   onPress,
 }: {
   name: string;
   delay: number;
   reduceMotion: boolean;
+  isPinned: boolean;
+  isOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  onPin: () => void;
   onPress: () => void;
 }) {
   const enter = useRef(new Animated.Value(0)).current;
   const press = useRef(new Animated.Value(0)).current;
+  const slide = useRef(new Animated.Value(0)).current;
+  const open = useRef(false);
 
   useEffect(() => {
     Animated.timing(enter, {
@@ -222,59 +303,124 @@ function AppRow({
     // Entrance runs once per row.
   }, []);
 
-  const opacity = Animated.multiply(
-    enter,
-    press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.45] }),
-  );
+  useEffect(() => {
+    open.current = isOpen;
+    settle(isOpen ? ACTION_WIDTH : 0);
+  }, [isOpen]);
+
+  function settle(toValue: number) {
+    Animated.timing(slide, {
+      toValue,
+      duration: reduceMotion ? 0 : DURATION_FAST,
+      easing: EASE_SMOOTH_OUT,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  const onOpenRef = useRef(onOpen);
+  const onCloseRef = useRef(onClose);
+  const settleRef = useRef(settle);
+  onOpenRef.current = onOpen;
+  onCloseRef.current = onClose;
+  settleRef.current = settle;
+
+  // The list scrolls vertically, so only claim clearly horizontal drags.
+  const swipe = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
+      onPanResponderMove: (_event, gesture) => {
+        const base = open.current ? ACTION_WIDTH : 0;
+        slide.setValue(
+          Math.max(0, Math.min(ACTION_WIDTH, base + gesture.dx)),
+        );
+      },
+      onPanResponderRelease: (_event, gesture) => {
+        const base = open.current ? ACTION_WIDTH : 0;
+        const shouldOpen = base + gesture.dx >= SWIPE_THRESHOLD;
+        if (shouldOpen) {
+          onOpenRef.current();
+        } else {
+          onCloseRef.current();
+        }
+        settleRef.current(shouldOpen ? ACTION_WIDTH : 0);
+      },
+    }),
+  ).current;
+
+  const dim = press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.45] });
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      onPressIn={() =>
-        Animated.spring(press, {
-          toValue: 1,
-          speed: 40,
-          bounciness: 0,
-          useNativeDriver: true,
-        }).start()
-      }
-      onPressOut={() =>
-        Animated.spring(press, {
-          toValue: 0,
-          speed: 20,
-          bounciness: 6,
-          useNativeDriver: true,
-        }).start()
-      }
-    >
+    <View>
+      <View style={styles.action}>
+        <Host style={styles.actionHost}>
+          <IconButton onClick={onPin}>
+            <Icon
+              source={isPinned ? UNPIN_ICON : PIN_ICON}
+              size={20}
+              tint="#8A8A8A"
+              contentDescription={isPinned ? `Unpin ${name}` : `Pin ${name}`}
+            />
+          </IconButton>
+        </Host>
+      </View>
+
       <Animated.View
-        style={[
-          styles.row,
-          {
-            opacity,
-            transform: [
-              {
-                translateY: enter.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [16, 0],
-                }),
-              },
-              {
-                scale: press.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 0.97],
-                }),
-              },
-            ],
-          },
-        ]}
+        {...swipe.panHandlers}
+        style={{ transform: [{ translateX: slide }] }}
       >
-        <Text numberOfLines={1} style={styles.name}>
-          {name}
-        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={isOpen ? onClose : onPress}
+          onPressIn={() =>
+            Animated.spring(press, {
+              toValue: 1,
+              speed: 40,
+              bounciness: 0,
+              useNativeDriver: true,
+            }).start()
+          }
+          onPressOut={() =>
+            Animated.spring(press, {
+              toValue: 0,
+              speed: 20,
+              bounciness: 6,
+              useNativeDriver: true,
+            }).start()
+          }
+        >
+          <Animated.View
+            style={[
+              styles.row,
+              {
+                opacity: enter,
+                transform: [
+                  {
+                    translateY: enter.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [16, 0],
+                    }),
+                  },
+                  {
+                    scale: press.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 0.97],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <Animated.Text
+              numberOfLines={1}
+              style={[styles.name, { opacity: dim }]}
+            >
+              {name}
+            </Animated.Text>
+          </Animated.View>
+        </Pressable>
       </Animated.View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -301,6 +447,19 @@ const styles = StyleSheet.create({
   row: {
     paddingHorizontal: 28,
     paddingVertical: 13,
+    backgroundColor: BACKGROUND,
+  },
+  action: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    left: ACTION_INSET,
+    width: ACTION_SIZE,
+    justifyContent: "center",
+  },
+  actionHost: {
+    width: ACTION_SIZE,
+    height: ACTION_SIZE,
   },
   name: {
     color: "#F2F2F2",
