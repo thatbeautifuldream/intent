@@ -70,7 +70,7 @@ const STAGGER_MS = 28;
 const MAX_STAGGERED = 14;
 
 const AnimatedFlatList = Animated.FlatList as unknown as React.ComponentType<
-  FlatListProps<InstalledApp>
+  FlatListProps<InstalledApp> & { ref?: React.Ref<FlatList<InstalledApp>> }
 >;
 const AnimatedGradient = Animated.createAnimatedComponent(LinearGradient);
 
@@ -94,6 +94,12 @@ function Launcher() {
   const scrollY = useRef(new Animated.Value(0)).current;
   const [overflow, setOverflow] = useState(0);
   const metrics = useRef({ content: 0, layout: 0 });
+  // Animated.FlatList wraps the list, and the wrapper does not expose the
+  // scroll methods, so keep a handle on whichever object actually has them.
+  const listRef = useRef<FlatList<InstalledApp> | null>(null);
+  const rowHeight = useRef(0);
+  const scrubberHeight = useRef(0);
+  const [scrubbing, setScrubbing] = useState<string>();
 
   useEffect(() => {
     LauncherModule.getInstalledApps().then(setApps).catch(showError);
@@ -153,6 +159,9 @@ function Launcher() {
     setOverflow(Math.max(0, content - layout));
   }
 
+  const scrubRef = useRef(scrubTo);
+  scrubRef.current = scrubTo;
+
   const onScroll = Animated.event(
     [{ nativeEvent: { contentOffset: { y: scrollY } } }],
     { useNativeDriver: true },
@@ -187,6 +196,60 @@ function Launcher() {
     return [...top, ...rest];
   }, [apps, pinned]);
 
+  // One entry per initial that actually appears, so the scrubber never offers a
+  // letter that goes nowhere.
+  const letters = useMemo(() => {
+    const first = new Map<string, number>();
+
+    ordered.forEach((app, index) => {
+      const initial = app.name[0]?.toUpperCase() ?? "#";
+      const key = initial >= "A" && initial <= "Z" ? initial : "#";
+      if (!first.has(key)) {
+        first.set(key, index);
+      }
+    });
+
+    return [...first.entries()].sort(([a], [b]) =>
+      a === "#" ? 1 : b === "#" ? -1 : a.localeCompare(b),
+    );
+  }, [ordered]);
+
+  function scrubTo(y: number) {
+    if (!letters.length || !scrubberHeight.current || !rowHeight.current) {
+      return;
+    }
+
+    const slot = Math.floor((y / scrubberHeight.current) * letters.length);
+    const [letter, index] = letters[Math.max(0, Math.min(letters.length - 1, slot))];
+
+    setScrubbing(letter);
+
+    const offset = index * rowHeight.current;
+    const list = listRef.current as unknown as {
+      scrollToOffset?: (options: { offset: number; animated: boolean }) => void;
+      getScrollResponder?: () => {
+        scrollTo?: (options: { y: number; animated: boolean }) => void;
+      };
+    } | null;
+
+    if (list?.scrollToOffset) {
+      list.scrollToOffset({ offset, animated: false });
+    } else {
+      list?.getScrollResponder?.()?.scrollTo?.({ y: offset, animated: false });
+    }
+  }
+
+  const scrubber = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (event) => scrubRef.current(event.nativeEvent.locationY),
+      onPanResponderMove: (event) => scrubRef.current(event.nativeEvent.locationY),
+      onPanResponderRelease: () => setScrubbing(undefined),
+      onPanResponderTerminate: () => setScrubbing(undefined),
+    }),
+  ).current;
+
   const footerHeight = insets.bottom + (isDefault ? 24 : 76);
 
   return (
@@ -198,6 +261,12 @@ function Launcher() {
       />
 
       <AnimatedFlatList
+        ref={(instance: unknown) => {
+          const node = instance as
+            | (FlatList<InstalledApp> & { getNode?: () => FlatList<InstalledApp> })
+            | null;
+          listRef.current = node?.getNode?.() ?? node;
+        }}
         data={ordered}
         keyExtractor={(app) => app.packageName}
         showsVerticalScrollIndicator={false}
@@ -215,6 +284,7 @@ function Launcher() {
         renderItem={({ item, index }) => (
           <AppRow
             name={item.name}
+            onMeasure={index === 0 ? (height) => (rowHeight.current = height) : undefined}
             delay={Math.min(index, MAX_STAGGERED) * STAGGER_MS}
             reduceMotion={reduceMotion}
             isPinned={pinned.includes(item.packageName)}
@@ -251,6 +321,32 @@ function Launcher() {
         ]}
       />
 
+      {overflow && letters.length > 4 ? (
+        <View
+          {...scrubber.panHandlers}
+          pointerEvents="box-only"
+          onLayout={(event) =>
+            (scrubberHeight.current = event.nativeEvent.layout.height)
+          }
+          style={[
+            styles.scrubber,
+            { top: insets.top + 40, bottom: footerHeight + 24 },
+          ]}
+        >
+          {letters.map(([letter]) => (
+            <Text
+              key={letter}
+              style={[
+                styles.letter,
+                letter === scrubbing && styles.letterActive,
+              ]}
+            >
+              {letter}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {isDefault ? null : (
@@ -273,6 +369,7 @@ function Launcher() {
 
 function AppRow({
   name,
+  onMeasure,
   delay,
   reduceMotion,
   isPinned,
@@ -284,6 +381,7 @@ function AppRow({
   onPress,
 }: {
   name: string;
+  onMeasure?: (height: number) => void;
   delay: number;
   reduceMotion: boolean;
   isPinned: boolean;
@@ -389,6 +487,7 @@ function AppRow({
 
       <Animated.View
         {...swipe.panHandlers}
+        onLayout={(event) => onMeasure?.(event.nativeEvent.layout.height)}
         style={{ transform: [{ translateX: slide }] }}
       >
         <Pressable
@@ -505,6 +604,22 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
+  },
+  scrubber: {
+    position: "absolute",
+    right: 0,
+    width: 34,
+    justifyContent: "space-evenly",
+    alignItems: "center",
+  },
+  letter: {
+    color: "#4A4A4A",
+    fontSize: 10,
+    fontWeight: "300",
+    letterSpacing: 0.4,
+  },
+  letterActive: {
+    color: "#F2F2F2",
   },
   footer: {
     position: "absolute",
