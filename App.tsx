@@ -109,6 +109,10 @@ function Launcher() {
   // The thumb is a plain number: one source of truth, written by the scroll
   // listener and by the drag, with no native/JS animated values to keep in sync.
   const [thumbY, setThumbY] = useState(0);
+  const thumbYRef = useRef(0);
+  // Where inside the thumb the drag started, so grabbing it mid-way does not
+  // snap it under the finger. A touch on the bare track centres it instead.
+  const grabOffset = useRef(THUMB_HEIGHT / 2);
   const [scrubbing, setScrubbing] = useState<string | undefined>(undefined);
   const scrubbingRef = useRef<string | undefined>(undefined);
 
@@ -165,9 +169,17 @@ function Launcher() {
 
   // No overflow, no fade — the same rule the CSS utility follows.
   function measure(next: Partial<{ content: number; layout: number }>) {
-    metrics.current = { ...metrics.current, ...next };
-    const { content, layout } = metrics.current;
-    setOverflow(Math.max(0, content - layout));
+    const merged = { ...metrics.current, ...next };
+
+    if (
+      merged.content === metrics.current.content &&
+      merged.layout === metrics.current.layout
+    ) {
+      return;
+    }
+
+    metrics.current = merged;
+    setOverflow(Math.max(0, merged.content - merged.layout));
   }
 
   const scrubRef = useRef(scrubTo);
@@ -179,15 +191,28 @@ function Launcher() {
     [{ nativeEvent: { contentOffset: { y: scrollY } } }],
     {
       useNativeDriver: true,
-      listener: (event: { nativeEvent: { contentOffset: { y: number } } }) => {
+      listener: (event: {
+        nativeEvent: {
+          contentOffset: { y: number };
+          contentSize: { height: number };
+          layoutMeasurement: { height: number };
+        };
+      }) => {
+        // The scroll event is the authoritative source for both sizes; the
+        // list's own onLayout reports a height that is not the viewport.
+        const { contentSize, layoutMeasurement } = event.nativeEvent;
+        measure({ content: contentSize.height, layout: layoutMeasurement.height });
+
         if (scrubbingRef.current || !overflow || !trackHeight) {
           return;
         }
         const progress = event.nativeEvent.contentOffset.y / overflow;
-        setThumbY(
+        const top =
           Math.max(0, Math.min(1, progress)) *
-            Math.max(0, trackHeight - THUMB_HEIGHT),
-        );
+          Math.max(0, trackHeight - THUMB_HEIGHT);
+
+        thumbYRef.current = top;
+        setThumbY(top);
       },
     },
   );
@@ -248,14 +273,21 @@ function Launcher() {
     // mapping against trackHeight leaves the last THUMB_HEIGHT of the range
     // unreachable, so the list never quite hits the bottom.
     const travel = Math.max(1, trackHeight - THUMB_HEIGHT);
-    const top = Math.max(0, Math.min(travel, y - THUMB_HEIGHT / 2));
+    const top = Math.max(0, Math.min(travel, y - grabOffset.current));
 
+    thumbYRef.current = top;
     setThumbY(top);
 
     const offset = (top / travel) * overflow;
+    // Rows start below the list's top padding, so the index is measured from
+    // there rather than from the raw content offset, and rounded up to the
+    // first fully visible row — the one a reader would call the top of the list.
     const index = Math.max(
       0,
-      Math.min(ordered.length - 1, Math.round(offset / rowHeight.current)),
+      Math.min(
+        ordered.length - 1,
+        Math.ceil((offset - listPaddingTop) / rowHeight.current),
+      ),
     );
     const initial = ordered[index].name[0]?.toUpperCase() ?? "#";
     const letter = initial >= "A" && initial <= "Z" ? initial : "#";
@@ -290,17 +322,30 @@ function Launcher() {
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (event) => scrubRef.current(event.nativeEvent.locationY),
+      onPanResponderGrant: (event) => {
+        const y = event.nativeEvent.locationY;
+        const onThumb =
+          y >= thumbYRef.current && y <= thumbYRef.current + THUMB_HEIGHT;
+        grabOffset.current = onThumb ? y - thumbYRef.current : THUMB_HEIGHT / 2;
+        scrubRef.current(y);
+      },
       onPanResponderMove: (event) => scrubRef.current(event.nativeEvent.locationY),
-      onPanResponderRelease: () => endScrubRef.current(),
+      onPanResponderRelease: () => {
+        grabOffset.current = THUMB_HEIGHT / 2;
+        endScrubRef.current();
+      },
       onPanResponderTerminate: () => endScrubRef.current(),
     }),
   ).current;
 
+  const listPaddingTop = insets.top + 24;
   const footerHeight = insets.bottom + (isDefault ? 24 : 76);
 
   return (
-    <View style={styles.screen}>
+    <View
+      style={styles.screen}
+      onLayout={(event) => measure({ layout: event.nativeEvent.layout.height })}
+    >
       <StatusBar
         translucent
         backgroundColor="transparent"
@@ -318,14 +363,11 @@ function Launcher() {
         keyExtractor={(app) => app.packageName}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
-          paddingTop: insets.top + 24,
+          paddingTop: listPaddingTop,
           paddingBottom: footerHeight + 32,
         }}
         scrollEventThrottle={16}
         onScroll={onScroll}
-        onLayout={(event) =>
-          measure({ layout: event.nativeEvent.layout.height })
-        }
         onContentSizeChange={(_width, height) => measure({ content: height })}
         ListEmptyComponent={<Text style={styles.muted}>No apps yet</Text>}
         renderItem={({ item, index }) => (
