@@ -1,0 +1,8 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Source of truth for the Intent mark. 1024px maps to Android's 108dp
+       adaptive icon canvas; the 480px glyph is ~50dp, inside the 48-66dp the
+       adaptive icon guidelines allow. -->
+  <rect width="1024" height="1024" fill="#000000"/>
+  <circle cx="512" cy="314" r="42" fill="#F2F2F2"/>
+  <rect x="476" y="412" width="72" height="340" fill="#F2F2F2"/>
+</svg>
