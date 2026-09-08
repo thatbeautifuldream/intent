@@ -244,10 +244,15 @@ function Launcher() {
       return;
     }
 
-    const travel = Math.max(0, trackHeight - THUMB_HEIGHT);
-    setThumbY(Math.max(0, Math.min(travel, y - THUMB_HEIGHT / 2)));
+    // Scroll has to be mapped over the thumb's travel, not the whole track:
+    // mapping against trackHeight leaves the last THUMB_HEIGHT of the range
+    // unreachable, so the list never quite hits the bottom.
+    const travel = Math.max(1, trackHeight - THUMB_HEIGHT);
+    const top = Math.max(0, Math.min(travel, y - THUMB_HEIGHT / 2));
 
-    const offset = Math.max(0, Math.min(1, y / trackHeight)) * overflow;
+    setThumbY(top);
+
+    const offset = (top / travel) * overflow;
     const index = Math.max(
       0,
       Math.min(ordered.length - 1, Math.round(offset / rowHeight.current)),
@@ -382,9 +387,9 @@ function Launcher() {
             ]}
           />
           {scrubbing ? (
-            <Text style={[styles.scrubbingLetter, { top: thumbY }]}>
-              {scrubbing}
-            </Text>
+            <View style={[styles.bubble, { top: thumbY }]}>
+              <Text style={styles.bubbleLetter}>{scrubbing}</Text>
+            </View>
           ) : null}
         </View>
       ) : null}
@@ -651,8 +656,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 0,
     width: SCRUBBER_TOUCH_WIDTH,
-    alignItems: "flex-end",
-    paddingRight: 14,
+    // The bubble hangs to the left of the touch strip, so it must not be clipped.
+    overflow: "visible",
   },
   track: {
     position: "absolute",
@@ -672,14 +677,25 @@ const styles = StyleSheet.create({
   thumbActive: {
     backgroundColor: "#F2F2F2",
   },
-  scrubbingLetter: {
+  // Sits well clear of the track so a thumb resting on the slider cannot cover
+  // it. The one square corner points back at the track, droplet style.
+  bubble: {
     position: "absolute",
-    right: 28,
+    right: 64,
     height: THUMB_HEIGHT,
-    lineHeight: THUMB_HEIGHT,
+    minWidth: THUMB_HEIGHT + 16,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1A1A1A",
+    borderRadius: THUMB_HEIGHT / 2,
+    borderBottomRightRadius: 6,
+  },
+  bubbleLetter: {
     color: "#F2F2F2",
-    fontSize: 21,
+    fontSize: 20,
     fontWeight: "300",
+    letterSpacing: 0.2,
   },
   footer: {
     position: "absolute",
