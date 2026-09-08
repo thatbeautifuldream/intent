@@ -17,7 +17,6 @@ import {
   View,
 } from "react-native";
 import { Button, Host, Text as NativeText } from "@expo/ui/jetpack-compose";
-import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   SafeAreaProvider,
@@ -47,12 +46,6 @@ const BOTTOM_FADE = 120;
 // equivalent, so this stays a LinearGradient rather than a native mask view.
 const SCROLL_FADE_REVEAL = 96;
 
-// A hairline scroll indicator that doubles as a scrubber. It scrolls freely —
-// only the haptic is quantised, ticking as the drag crosses into a new initial.
-const TRACK_WIDTH = 2;
-const THUMB_HEIGHT = 48;
-const SCRUBBER_TOUCH_WIDTH = 36;
-
 const EASE_SMOOTH_OUT = Easing.bezier(0.22, 1, 0.36, 1);
 // transitions.dev maps a position change to --duration-fast + --ease-smooth-out.
 // LayoutAnimation only exposes named curves, so easeOut stands in for the bezier.
@@ -77,7 +70,7 @@ const STAGGER_MS = 28;
 const MAX_STAGGERED = 14;
 
 const AnimatedFlatList = Animated.FlatList as unknown as React.ComponentType<
-  FlatListProps<InstalledApp> & { ref?: React.Ref<FlatList<InstalledApp>> }
+  FlatListProps<InstalledApp>
 >;
 const AnimatedGradient = Animated.createAnimatedComponent(LinearGradient);
 
@@ -101,20 +94,6 @@ function Launcher() {
   const scrollY = useRef(new Animated.Value(0)).current;
   const [overflow, setOverflow] = useState(0);
   const metrics = useRef({ content: 0, layout: 0 });
-  // Animated.FlatList wraps the list, and the wrapper does not expose the
-  // scroll methods, so keep a handle on whichever object actually has them.
-  const listRef = useRef<FlatList<InstalledApp> | null>(null);
-  const rowHeight = useRef(0);
-  const [trackHeight, setTrackHeight] = useState(0);
-  // The thumb is a plain number: one source of truth, written by the scroll
-  // listener and by the drag, with no native/JS animated values to keep in sync.
-  const [thumbY, setThumbY] = useState(0);
-  const thumbYRef = useRef(0);
-  // Where inside the thumb the drag started, so grabbing it mid-way does not
-  // snap it under the finger. A touch on the bare track centres it instead.
-  const grabOffset = useRef(THUMB_HEIGHT / 2);
-  const [scrubbing, setScrubbing] = useState<string | undefined>(undefined);
-  const scrubbingRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     LauncherModule.getInstalledApps().then(setApps).catch(showError);
@@ -169,52 +148,14 @@ function Launcher() {
 
   // No overflow, no fade — the same rule the CSS utility follows.
   function measure(next: Partial<{ content: number; layout: number }>) {
-    const merged = { ...metrics.current, ...next };
-
-    if (
-      merged.content === metrics.current.content &&
-      merged.layout === metrics.current.layout
-    ) {
-      return;
-    }
-
-    metrics.current = merged;
-    setOverflow(Math.max(0, merged.content - merged.layout));
+    metrics.current = { ...metrics.current, ...next };
+    const { content, layout } = metrics.current;
+    setOverflow(Math.max(0, content - layout));
   }
-
-  const scrubRef = useRef(scrubTo);
-  scrubRef.current = scrubTo;
-  const endScrubRef = useRef(endScrub);
-  endScrubRef.current = endScrub;
 
   const onScroll = Animated.event(
     [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-    {
-      useNativeDriver: true,
-      listener: (event: {
-        nativeEvent: {
-          contentOffset: { y: number };
-          contentSize: { height: number };
-          layoutMeasurement: { height: number };
-        };
-      }) => {
-        // The scroll event is the authoritative source for both sizes; the
-        // list's own onLayout reports a height that is not the viewport.
-        const { contentSize, layoutMeasurement } = event.nativeEvent;
-        measure({ content: contentSize.height, layout: layoutMeasurement.height });
-
-        if (scrubbingRef.current || !overflow || !trackHeight) {
-          return;
-        }
-        const progress = event.nativeEvent.contentOffset.y / overflow;
-        const top =
-          Math.max(0, Math.min(1, progress)) *
-          Math.max(0, trackHeight - THUMB_HEIGHT);
-
-        thumbYRef.current = top;
-        setThumbY(top);
-      },
-    },
+    { useNativeDriver: true },
   );
 
   const topFade = overflow
@@ -246,106 +187,10 @@ function Launcher() {
     return [...top, ...rest];
   }, [apps, pinned]);
 
-  // One entry per initial that actually appears, so the scrubber never offers a
-  // letter that goes nowhere.
-  const letters = useMemo(() => {
-    const first = new Map<string, number>();
-
-    ordered.forEach((app, index) => {
-      const initial = app.name[0]?.toUpperCase() ?? "#";
-      const key = initial >= "A" && initial <= "Z" ? initial : "#";
-      if (!first.has(key)) {
-        first.set(key, index);
-      }
-    });
-
-    return [...first.entries()].sort(([a], [b]) =>
-      a === "#" ? 1 : b === "#" ? -1 : a.localeCompare(b),
-    );
-  }, [ordered]);
-
-  function scrubTo(y: number) {
-    if (!trackHeight || !rowHeight.current || !ordered.length) {
-      return;
-    }
-
-    // Scroll has to be mapped over the thumb's travel, not the whole track:
-    // mapping against trackHeight leaves the last THUMB_HEIGHT of the range
-    // unreachable, so the list never quite hits the bottom.
-    const travel = Math.max(1, trackHeight - THUMB_HEIGHT);
-    const top = Math.max(0, Math.min(travel, y - grabOffset.current));
-
-    thumbYRef.current = top;
-    setThumbY(top);
-
-    const offset = (top / travel) * overflow;
-    // Rows start below the list's top padding, so the index is measured from
-    // there rather than from the raw content offset, and rounded up to the
-    // first fully visible row — the one a reader would call the top of the list.
-    const index = Math.max(
-      0,
-      Math.min(
-        ordered.length - 1,
-        Math.ceil((offset - listPaddingTop) / rowHeight.current),
-      ),
-    );
-    const initial = ordered[index].name[0]?.toUpperCase() ?? "#";
-    const letter = initial >= "A" && initial <= "Z" ? initial : "#";
-
-    if (letter !== scrubbingRef.current) {
-      scrubbingRef.current = letter;
-      Haptics.selectionAsync().catch(() => {});
-    }
-
-    setScrubbing(letter);
-
-    const list = listRef.current as unknown as {
-      scrollToOffset?: (options: { offset: number; animated: boolean }) => void;
-      getScrollResponder?: () => {
-        scrollTo?: (options: { y: number; animated: boolean }) => void;
-      };
-    } | null;
-
-    if (list?.scrollToOffset) {
-      list.scrollToOffset({ offset, animated: false });
-    } else {
-      list?.getScrollResponder?.()?.scrollTo?.({ y: offset, animated: false });
-    }
-  }
-
-  function endScrub() {
-    scrubbingRef.current = undefined;
-    setScrubbing(undefined);
-  }
-
-  const scrubber = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (event) => {
-        const y = event.nativeEvent.locationY;
-        const onThumb =
-          y >= thumbYRef.current && y <= thumbYRef.current + THUMB_HEIGHT;
-        grabOffset.current = onThumb ? y - thumbYRef.current : THUMB_HEIGHT / 2;
-        scrubRef.current(y);
-      },
-      onPanResponderMove: (event) => scrubRef.current(event.nativeEvent.locationY),
-      onPanResponderRelease: () => {
-        grabOffset.current = THUMB_HEIGHT / 2;
-        endScrubRef.current();
-      },
-      onPanResponderTerminate: () => endScrubRef.current(),
-    }),
-  ).current;
-
-  const listPaddingTop = insets.top + 24;
   const footerHeight = insets.bottom + (isDefault ? 24 : 76);
 
   return (
-    <View
-      style={styles.screen}
-      onLayout={(event) => measure({ layout: event.nativeEvent.layout.height })}
-    >
+    <View style={styles.screen}>
       <StatusBar
         translucent
         backgroundColor="transparent"
@@ -353,27 +198,23 @@ function Launcher() {
       />
 
       <AnimatedFlatList
-        ref={(instance: unknown) => {
-          const node = instance as
-            | (FlatList<InstalledApp> & { getNode?: () => FlatList<InstalledApp> })
-            | null;
-          listRef.current = node?.getNode?.() ?? node;
-        }}
         data={ordered}
         keyExtractor={(app) => app.packageName}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
-          paddingTop: listPaddingTop,
+          paddingTop: insets.top + 24,
           paddingBottom: footerHeight + 32,
         }}
         scrollEventThrottle={16}
         onScroll={onScroll}
+        onLayout={(event) =>
+          measure({ layout: event.nativeEvent.layout.height })
+        }
         onContentSizeChange={(_width, height) => measure({ content: height })}
         ListEmptyComponent={<Text style={styles.muted}>No apps yet</Text>}
         renderItem={({ item, index }) => (
           <AppRow
             name={item.name}
-            onMeasure={index === 0 ? (height) => (rowHeight.current = height) : undefined}
             delay={Math.min(index, MAX_STAGGERED) * STAGGER_MS}
             reduceMotion={reduceMotion}
             isPinned={pinned.includes(item.packageName)}
@@ -410,32 +251,6 @@ function Launcher() {
         ]}
       />
 
-      {overflow && letters.length > 4 ? (
-        <View
-          {...scrubber.panHandlers}
-          pointerEvents="box-only"
-          onLayout={(event) => setTrackHeight(event.nativeEvent.layout.height)}
-          style={[
-            styles.scrubber,
-            { top: insets.top + 40, bottom: footerHeight + 24 },
-          ]}
-        >
-          <View style={styles.track} />
-          <View
-            style={[
-              styles.thumb,
-              scrubbing ? styles.thumbActive : null,
-              { top: thumbY },
-            ]}
-          />
-          {scrubbing ? (
-            <View style={[styles.bubble, { top: thumbY }]}>
-              <Text style={styles.bubbleLetter}>{scrubbing}</Text>
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {isDefault ? null : (
@@ -458,7 +273,6 @@ function Launcher() {
 
 function AppRow({
   name,
-  onMeasure,
   delay,
   reduceMotion,
   isPinned,
@@ -470,7 +284,6 @@ function AppRow({
   onPress,
 }: {
   name: string;
-  onMeasure?: (height: number) => void;
   delay: number;
   reduceMotion: boolean;
   isPinned: boolean;
@@ -576,7 +389,6 @@ function AppRow({
 
       <Animated.View
         {...swipe.panHandlers}
-        onLayout={(event) => onMeasure?.(event.nativeEvent.layout.height)}
         style={{ transform: [{ translateX: slide }] }}
       >
         <Pressable
@@ -693,51 +505,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-  },
-  scrubber: {
-    position: "absolute",
-    right: 0,
-    width: SCRUBBER_TOUCH_WIDTH,
-    // The bubble hangs to the left of the touch strip, so it must not be clipped.
-    overflow: "visible",
-  },
-  track: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    right: 14,
-    width: TRACK_WIDTH,
-    backgroundColor: "#1C1C1C",
-  },
-  thumb: {
-    position: "absolute",
-    right: 14,
-    width: TRACK_WIDTH,
-    height: THUMB_HEIGHT,
-    backgroundColor: "#3A3A3A",
-  },
-  thumbActive: {
-    backgroundColor: "#F2F2F2",
-  },
-  // Sits well clear of the track so a thumb resting on the slider cannot cover
-  // it. The one square corner points back at the track, droplet style.
-  bubble: {
-    position: "absolute",
-    right: 64,
-    height: THUMB_HEIGHT,
-    minWidth: THUMB_HEIGHT + 16,
-    paddingHorizontal: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#1A1A1A",
-    borderRadius: THUMB_HEIGHT / 2,
-    borderBottomRightRadius: 6,
-  },
-  bubbleLetter: {
-    color: "#F2F2F2",
-    fontSize: 20,
-    fontWeight: "300",
-    letterSpacing: 0.2,
   },
   footer: {
     position: "absolute",
