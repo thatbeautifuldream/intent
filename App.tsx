@@ -1,3 +1,4 @@
+import type * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AccessibilityInfo,
@@ -6,6 +7,7 @@ import {
   BackHandler,
   Easing,
   FlatList,
+  type FlatListProps,
   Keyboard,
   Pressable,
   RefreshControl,
@@ -28,6 +30,14 @@ const BACKGROUND = "#000000";
 const TOP_FADE = 56;
 const BOTTOM_FADE = 120;
 
+// Ported from shadcn's `scroll-fade`: the edge fade tracks scroll position
+// rather than sitting there permanently. At rest the top is crisp and the
+// bottom hints at more content; at the end the bottom sharpens. Each edge eases
+// over this reveal distance (their --scroll-fade-reveal default). CSS does it
+// with mask-image; on a solid background a black gradient overlay is
+// equivalent, so this stays a LinearGradient rather than a native mask view.
+const SCROLL_FADE_REVEAL = 96;
+
 // Motion tokens: transitions.dev scale, applied to Animated instead of CSS.
 const EASE_SMOOTH_OUT = Easing.bezier(0.22, 1, 0.36, 1);
 const DURATION_MEDIUM = 350;
@@ -38,6 +48,11 @@ const STAGGER_MS = 28;
 const MAX_STAGGERED = 14;
 
 
+
+const AnimatedFlatList = Animated.FlatList as unknown as React.ComponentType<
+  FlatListProps<InstalledApp>
+>;
+const AnimatedGradient = Animated.createAnimatedComponent(LinearGradient);
 
 export default function App() {
   return (
@@ -57,6 +72,37 @@ function Launcher() {
   const reduceMotion = useReduceMotion();
 
   const search = useRef(new Animated.Value(0)).current;
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const [overflow, setOverflow] = useState(0);
+  const metrics = useRef({ content: 0, layout: 0 });
+
+  // No overflow, no fade — the same rule the CSS utility follows.
+  function measure(next: Partial<{ content: number; layout: number }>) {
+    metrics.current = { ...metrics.current, ...next };
+    const { content, layout } = metrics.current;
+    setOverflow(Math.max(0, content - layout));
+  }
+
+  const onScroll = Animated.event(
+    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+    { useNativeDriver: true },
+  );
+
+  const topFade = overflow
+    ? scrollY.interpolate({
+        inputRange: [0, SCROLL_FADE_REVEAL],
+        outputRange: [0, 1],
+        extrapolate: "clamp",
+      })
+    : 0;
+
+  const bottomFade = overflow
+    ? scrollY.interpolate({
+        inputRange: [Math.max(0, overflow - SCROLL_FADE_REVEAL), Math.max(1, overflow)],
+        outputRange: [1, 0],
+        extrapolate: "clamp",
+      })
+    : 0;
 
   useEffect(() => {
     LauncherModule.getInstalledApps().then(setApps).catch(showError);
@@ -100,6 +146,8 @@ function Launcher() {
       return;
     }
     setSearching(true);
+    scrollY.setValue(0);
+    metrics.current = { content: 0, layout: metrics.current.layout };
     Animated.timing(search, {
       toValue: 1,
       duration: reduceMotion ? 0 : DURATION_SLOW,
@@ -118,6 +166,7 @@ function Launcher() {
     }).start(() => {
       setSearching(false);
       setQuery("");
+      scrollY.setValue(0);
     });
   }
 
@@ -154,12 +203,20 @@ function Launcher() {
           },
         ]}
       >
-        <FlatList
+        <AnimatedFlatList
           data={apps}
           keyExtractor={(app) => app.packageName}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={listPadding}
+          scrollEventThrottle={16}
+          onScroll={onScroll}
+          onLayout={(event) =>
+            measure({ layout: event.nativeEvent.layout.height })
+          }
+          onContentSizeChange={(_width, height) =>
+            measure({ content: height })
+          }
           refreshControl={
             <RefreshControl
               refreshing={false}
@@ -227,13 +284,21 @@ function Launcher() {
               ) : null}
             </View>
 
-            <FlatList
+            <AnimatedFlatList
               data={results}
               keyExtractor={(app) => app.packageName}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
               contentContainerStyle={{ paddingBottom: footerHeight + 32 }}
+              scrollEventThrottle={16}
+              onScroll={onScroll}
+              onLayout={(event) =>
+                measure({ layout: event.nativeEvent.layout.height })
+              }
+              onContentSizeChange={(_width, height) =>
+                measure({ content: height })
+              }
               ListEmptyComponent={
                 query ? <Text style={styles.muted}>No matches</Text> : null
               }
@@ -250,17 +315,27 @@ function Launcher() {
         ) : null}
       </Animated.View>
 
-      <LinearGradient
+      <AnimatedGradient
         pointerEvents="none"
         colors={[BACKGROUND, BACKGROUND, "transparent"]}
         locations={[0, insets.top / (insets.top + TOP_FADE), 1]}
-        style={[styles.fade, { top: 0, height: insets.top + TOP_FADE }]}
+        style={[
+          styles.fade,
+          { top: 0, height: insets.top + TOP_FADE, opacity: topFade },
+        ]}
       />
-      <LinearGradient
+      <AnimatedGradient
         pointerEvents="none"
         colors={["transparent", BACKGROUND, BACKGROUND]}
         locations={[0, BOTTOM_FADE / (insets.bottom + BOTTOM_FADE), 1]}
-        style={[styles.fade, { bottom: 0, height: insets.bottom + BOTTOM_FADE }]}
+        style={[
+          styles.fade,
+          {
+            bottom: 0,
+            height: insets.bottom + BOTTOM_FADE,
+            opacity: bottomFade,
+          },
+        ]}
       />
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
