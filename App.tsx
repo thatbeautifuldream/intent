@@ -21,6 +21,7 @@ import {
   Icon,
   IconButton,
   Text as NativeText,
+  Row,
 } from "@expo/ui/jetpack-compose";
 import { LinearGradient } from "expo-linear-gradient";
 import {
@@ -35,6 +36,7 @@ import LauncherModule, { type InstalledApp } from "./modules/launcher";
 const PINNED_KEY = "pinned-apps";
 const PIN_ICON = require("./assets/icons/pin.xml");
 const UNPIN_ICON = require("./assets/icons/unpin.xml");
+const INFO_ICON = require("./assets/icons/info.xml");
 
 const BACKGROUND = "#000000";
 const TOP_FADE = 56;
@@ -60,12 +62,13 @@ const REORDER_ANIMATION = {
 };
 const DURATION_VERY_SLOW = 420;
 
-// A right swipe slides the row aside to uncover the pin action beneath it, so
-// the travel is exactly the action's footprint: a Material 48dp touch target
-// with matching margins either side.
+// A right swipe slides the row aside to uncover the actions beneath it, so the
+// travel is exactly their footprint: two Material 48dp touch targets with
+// matching margins either side.
 const ACTION_SIZE = 48;
 const ACTION_INSET = 12;
-const ACTION_WIDTH = ACTION_INSET * 2 + ACTION_SIZE;
+const ACTION_COUNT = 2;
+const ACTION_WIDTH = ACTION_INSET * 2 + ACTION_SIZE * ACTION_COUNT;
 const SWIPE_THRESHOLD = ACTION_WIDTH / 2;
 const STAGGER_MS = 28;
 const MAX_STAGGERED = 14;
@@ -125,6 +128,11 @@ function Launcher() {
 
   function launchApp(packageName: string) {
     LauncherModule.launchApp(packageName).catch(showError);
+  }
+
+  function openAppInfo(packageName: string) {
+    LauncherModule.openAppInfo(packageName).catch(showError);
+    setOpenRow(undefined);
   }
 
   // Most recently pinned first, so a freshly pinned app lands at the very top.
@@ -218,6 +226,7 @@ function Launcher() {
             onOpen={() => setOpenRow(item.packageName)}
             onClose={() => setOpenRow(undefined)}
             onPin={() => togglePin(item.packageName)}
+            onInfo={() => openAppInfo(item.packageName)}
             onPress={() => launchApp(item.packageName)}
           />
         )}
@@ -275,6 +284,7 @@ function AppRow({
   onOpen,
   onClose,
   onPin,
+  onInfo,
   onPress,
 }: {
   name: string;
@@ -285,6 +295,7 @@ function AppRow({
   onOpen: () => void;
   onClose: () => void;
   onPin: () => void;
+  onInfo: () => void;
   onPress: () => void;
 }) {
   const enter = useRef(new Animated.Value(0)).current;
@@ -354,14 +365,24 @@ function AppRow({
     <View>
       <View style={styles.action}>
         <Host style={styles.actionHost}>
-          <IconButton onClick={onPin}>
-            <Icon
-              source={isPinned ? UNPIN_ICON : PIN_ICON}
-              size={20}
-              tint="#8A8A8A"
-              contentDescription={isPinned ? `Unpin ${name}` : `Pin ${name}`}
-            />
-          </IconButton>
+          <Row verticalAlignment="center">
+            <IconButton onClick={onPin}>
+              <Icon
+                source={isPinned ? UNPIN_ICON : PIN_ICON}
+                size={20}
+                tint="#8A8A8A"
+                contentDescription={isPinned ? `Unpin ${name}` : `Pin ${name}`}
+              />
+            </IconButton>
+            <IconButton onClick={onInfo}>
+              <Icon
+                source={INFO_ICON}
+                size={20}
+                tint="#8A8A8A"
+                contentDescription={`App info for ${name}`}
+              />
+            </IconButton>
+          </Row>
         </Host>
       </View>
 
@@ -454,11 +475,10 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     left: ACTION_INSET,
-    width: ACTION_SIZE,
     justifyContent: "center",
   },
   actionHost: {
-    width: ACTION_SIZE,
+    width: ACTION_SIZE * ACTION_COUNT,
     height: ACTION_SIZE,
   },
   name: {

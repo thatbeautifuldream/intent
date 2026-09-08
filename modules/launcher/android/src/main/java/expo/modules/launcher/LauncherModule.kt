@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Base64
@@ -72,6 +73,15 @@ class LauncherModule : Module() {
       val intent = context.packageManager.getLaunchIntentForPackage(packageName)
         ?: throw CodedException("No launchable activity found for $packageName")
       context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("openAppInfo") { packageName: String ->
+      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      val intent = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", packageName, null)
+      ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.startActivity(intent)
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("requestHomeRole") {

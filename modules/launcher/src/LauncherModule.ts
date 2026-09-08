@@ -6,6 +6,7 @@ declare class LauncherModule extends NativeModule {
   getInstalledApps(): Promise<InstalledApp[]>;
   isDefaultLauncher(): Promise<boolean>;
   launchApp(packageName: string): Promise<void>;
+  openAppInfo(packageName: string): Promise<void>;
   requestHomeRole(): Promise<void>;
 }
 
