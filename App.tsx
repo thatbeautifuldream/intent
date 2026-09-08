@@ -130,7 +130,7 @@ function Launcher() {
 
   const footerHeight = insets.bottom + (isDefault ? 24 : 76);
   const listPadding = {
-    paddingTop: insets.top + 24,
+    paddingTop: insets.top + 52,
     paddingBottom: footerHeight + 32,
   };
 
@@ -262,6 +262,29 @@ function Launcher() {
         locations={[0, BOTTOM_FADE / (insets.bottom + BOTTOM_FADE), 1]}
         style={[styles.fade, { bottom: 0, height: insets.bottom + BOTTOM_FADE }]}
       />
+
+      <Animated.View
+        pointerEvents={searching ? "none" : "auto"}
+        style={[
+          styles.searchButton,
+          {
+            top: insets.top + 6,
+            opacity: search.interpolate({
+              inputRange: [0, 1],
+              outputRange: [1, 0],
+            }),
+          },
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Search apps"
+          hitSlop={12}
+          onPress={openSearch}
+        >
+          <Text style={styles.searchLabel}>Search</Text>
+        </Pressable>
+      </Animated.View>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -451,6 +474,18 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
+  },
+  searchButton: {
+    position: "absolute",
+    right: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  searchLabel: {
+    color: "#8A8A8A",
+    fontSize: 14,
+    fontWeight: "300",
+    letterSpacing: 0.4,
   },
   footer: {
     position: "absolute",
