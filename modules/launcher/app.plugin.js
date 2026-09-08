@@ -2,11 +2,93 @@ const {
   AndroidConfig,
   withAndroidManifest,
   withAndroidStyles,
+  withMainActivity,
 } = require("expo/config-plugins");
 
+const INERT_BACK_MARKER = "// launcher: back is inert";
+
 module.exports = function withLauncher(config) {
-  return withOpaqueWindow(withHomeIntent(config));
+  return withInertBack(withOpaqueWindow(withHomeIntent(config)));
 };
+
+// The launcher owns the root of the home task, so letting back finish the
+// activity destroys the task and the system relaunches the launcher from
+// scratch. This has to be onBackPressed rather than React Native's
+// invokeDefaultOnBackPressed: before there is a React context — the whole cold
+// start — ReactActivity falls straight through to Activity.onBackPressed, so
+// the React Native hook is never reached.
+function withInertBack(config) {
+  return withMainActivity(config, (config) => {
+    if (config.modResults.language !== "kt") {
+      return config;
+    }
+
+    const contents = config.modResults.contents;
+    if (contents.includes(INERT_BACK_MARKER)) {
+      return config;
+    }
+
+    const override = [
+      `  ${INERT_BACK_MARKER}`,
+      '  @Suppress("DEPRECATION")',
+      "  override fun onBackPressed() = Unit",
+    ].join("\n");
+
+    const signature = "override fun invokeDefaultOnBackPressed()";
+    const start = contents.indexOf(signature);
+
+    if (start === -1) {
+      // Nothing to replace, so add the override to the end of the class body.
+      const classEnd = contents.lastIndexOf("}");
+      config.modResults.contents = `${contents.slice(0, classEnd)}\n${override}\n${contents.slice(classEnd)}`;
+      return config;
+    }
+
+    // Replace the template's implementation by matching braces, so the patch
+    // does not depend on the exact body Expo generates.
+    const open = contents.indexOf("{", start);
+    let depth = 0;
+    let close = -1;
+
+    for (let i = open; i < contents.length; i++) {
+      if (contents[i] === "{") {
+        depth += 1;
+      } else if (contents[i] === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          close = i;
+          break;
+        }
+      }
+    }
+
+    if (close === -1) {
+      return config;
+    }
+
+    // The template's doc comment describes the behaviour being replaced.
+    const docStart = contents.lastIndexOf("/**", start);
+    const docEnd = contents.indexOf("*/", docStart);
+    const replaceFrom =
+      docStart !== -1 && !contents.slice(docEnd + 2, start).trim()
+        ? docStart
+        : start;
+
+    config.modResults.contents =
+      contents.slice(0, replaceFrom) +
+      override.trimStart() +
+      contents.slice(close + 1);
+
+    if (!config.modResults.contents.includes("Build.VERSION")) {
+      config.modResults.contents = config.modResults.contents.replace(
+        "import android.os.Build\n",
+        "",
+      );
+    }
+
+    return config;
+  });
+}
 
 // A launcher window that is not opaque lets the system wallpaper show through
 // while the home gesture animates. Both the splash drawable and the wallpaper
