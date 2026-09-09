@@ -92,8 +92,29 @@ function Launcher() {
   const [overflow, setOverflow] = useState(0);
   const metrics = useRef({ content: 0, layout: 0 });
 
-  useEffect(() => {
+  const loadApps = useRef(() => {
     LauncherModule.getInstalledApps().then(setApps).catch(showError);
+  });
+
+  useEffect(() => {
+    loadApps.current();
+  }, []);
+
+  // The system tells the launcher when packages are installed, updated or
+  // removed, so the list is rebuilt exactly when it changes and never polled.
+  // Package operations arrive in bursts, hence the short coalescing window.
+  useEffect(() => {
+    let pending: ReturnType<typeof setTimeout>;
+
+    const subscription = LauncherModule.addListener("onAppsChanged", () => {
+      clearTimeout(pending);
+      pending = setTimeout(() => loadApps.current(), 250);
+    });
+
+    return () => {
+      clearTimeout(pending);
+      subscription.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -120,7 +141,12 @@ function Launcher() {
   }
 
   function launchApp(packageName: string) {
-    LauncherModule.launchApp(packageName).catch(showError);
+    LauncherModule.launchApp(packageName).catch((reason) => {
+      // A row that will not launch is a stale entry, so rebuild the list rather
+      // than leaving the user tapping something that cannot work.
+      loadApps.current();
+      showError(reason);
+    });
   }
 
   function openAppInfo(packageName: string) {

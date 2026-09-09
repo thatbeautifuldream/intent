@@ -1,26 +1,73 @@
 package expo.modules.launcher
 
 import android.app.role.RoleManager
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
 import android.provider.Settings
-import android.util.Base64
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import java.io.ByteArrayOutputStream
 import java.util.Locale
 
 class LauncherModule : Module() {
+  private var launcherApps: LauncherApps? = null
+  private var callback: LauncherApps.Callback? = null
+
   override fun definition() = ModuleDefinition {
     Name("LauncherModule")
+
+    Events("onAppsChanged")
+
+    // LauncherApps is the launcher-specific channel for install, update and
+    // uninstall events, so the list stays accurate without polling.
+    OnStartObserving {
+      val context = appContext.reactContext ?: return@OnStartObserving
+      val service =
+        context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+
+      val changed = object : LauncherApps.Callback() {
+        override fun onPackageAdded(packageName: String?, user: UserHandle?) =
+          sendEvent("onAppsChanged", emptyMap<String, Any>())
+
+        override fun onPackageRemoved(packageName: String?, user: UserHandle?) =
+          sendEvent("onAppsChanged", emptyMap<String, Any>())
+
+        override fun onPackageChanged(packageName: String?, user: UserHandle?) =
+          sendEvent("onAppsChanged", emptyMap<String, Any>())
+
+        override fun onPackagesAvailable(
+          packageNames: Array<out String>?,
+          user: UserHandle?,
+          replacing: Boolean
+        ) = sendEvent("onAppsChanged", emptyMap<String, Any>())
+
+        override fun onPackagesUnavailable(
+          packageNames: Array<out String>?,
+          user: UserHandle?,
+          replacing: Boolean
+        ) = sendEvent("onAppsChanged", emptyMap<String, Any>())
+      }
+
+      service.registerCallback(changed, Handler(Looper.getMainLooper()))
+      launcherApps = service
+      callback = changed
+    }
+
+    OnStopObserving {
+      callback?.let { launcherApps?.unregisterCallback(it) }
+      callback = null
+      launcherApps = null
+    }
 
     AsyncFunction("getInstalledApps") {
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -44,8 +91,7 @@ class LauncherModule : Module() {
         .map { activity ->
           mapOf(
             "name" to activity.loadLabel(packageManager).toString(),
-            "packageName" to activity.activityInfo.packageName,
-            "icon" to activity.loadIcon(packageManager).toDataUri()
+            "packageName" to activity.activityInfo.packageName
           )
         }
         .sortedBy { (it["name"] as String).lowercase(Locale.getDefault()) }
@@ -104,25 +150,7 @@ class LauncherModule : Module() {
     }.runOnQueue(Queues.MAIN)
   }
 
-  private fun Drawable.toDataUri(): String {
-    val width = intrinsicWidth.takeIf { it > 0 } ?: ICON_SIZE
-    val height = intrinsicHeight.takeIf { it > 0 } ?: ICON_SIZE
-    val scale = minOf(ICON_SIZE.toFloat() / width, ICON_SIZE.toFloat() / height, 1f)
-    val bitmapWidth = maxOf(1, (width * scale).toInt())
-    val bitmapHeight = maxOf(1, (height * scale).toInt())
-    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
-    setBounds(0, 0, bitmapWidth, bitmapHeight)
-    draw(Canvas(bitmap))
-
-    return ByteArrayOutputStream().use { output ->
-      bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
-      bitmap.recycle()
-      "data:image/png;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
-    }
-  }
-
   private companion object {
-    const val ICON_SIZE = 96
     const val HOME_ROLE_REQUEST_CODE = 100
   }
 }
