@@ -14,7 +14,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "monochromeImage": "./assets/monochrome-icon.png",
         "backgroundColor": "#000000"
-      }
+      },
+      "versionCode": 1
     },
     "plugins": [
       "expo-dev-client",
@@ -23,6 +24,7 @@
     ],
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
-    "icon": "./assets/icon.png"
+    "icon": "./assets/icon.png",
+    "version": "1.0.0"
   }
 }
