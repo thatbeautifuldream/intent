@@ -3,7 +3,7 @@ import { NativeModule, requireNativeModule } from "expo";
 import type { InstalledApp } from "./LauncherModule.types";
 
 type LauncherEvents = {
-  onAppsChanged(): void;
+  onAppsChanged(payload: { removed: string[] }): void;
 };
 
 declare class LauncherModule extends NativeModule<LauncherEvents> {

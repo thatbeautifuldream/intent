@@ -35,27 +35,32 @@ class LauncherModule : Module() {
       val service =
         context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
 
+      // Removals carry the package so the list can drop the row immediately;
+      // anything else needs a re-query to pick up a label.
       val changed = object : LauncherApps.Callback() {
         override fun onPackageAdded(packageName: String?, user: UserHandle?) =
-          sendEvent("onAppsChanged", emptyMap<String, Any>())
+          sendEvent("onAppsChanged", mapOf("removed" to emptyList<String>()))
 
         override fun onPackageRemoved(packageName: String?, user: UserHandle?) =
-          sendEvent("onAppsChanged", emptyMap<String, Any>())
+          sendEvent("onAppsChanged", mapOf("removed" to listOfNotNull(packageName)))
 
         override fun onPackageChanged(packageName: String?, user: UserHandle?) =
-          sendEvent("onAppsChanged", emptyMap<String, Any>())
+          sendEvent("onAppsChanged", mapOf("removed" to emptyList<String>()))
 
         override fun onPackagesAvailable(
           packageNames: Array<out String>?,
           user: UserHandle?,
           replacing: Boolean
-        ) = sendEvent("onAppsChanged", emptyMap<String, Any>())
+        ) = sendEvent("onAppsChanged", mapOf("removed" to emptyList<String>()))
 
         override fun onPackagesUnavailable(
           packageNames: Array<out String>?,
           user: UserHandle?,
           replacing: Boolean
-        ) = sendEvent("onAppsChanged", emptyMap<String, Any>())
+        ) = sendEvent(
+          "onAppsChanged",
+          mapOf("removed" to (packageNames?.toList() ?: emptyList<String>()))
+        )
       }
 
       service.registerCallback(changed, Handler(Looper.getMainLooper()))

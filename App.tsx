@@ -49,7 +49,21 @@ const SCROLL_FADE_REVEAL = 96;
 const EASE_SMOOTH_OUT = Easing.bezier(0.22, 1, 0.36, 1);
 // transitions.dev maps a position change to --duration-fast + --ease-smooth-out.
 // LayoutAnimation only exposes named curves, so easeOut stands in for the bezier.
+const DURATION_QUICK = 150;
 const DURATION_FAST = 250;
+// transitions.dev: the row leaves on --duration-quick while the rows below it
+// close the gap on --duration-fast, both on the smooth-out curve that
+// LayoutAnimation approximates with easeOut.
+const REMOVE_ANIMATION = {
+  duration: DURATION_FAST,
+  update: { type: LayoutAnimation.Types.easeOut, duration: DURATION_FAST },
+  delete: {
+    type: LayoutAnimation.Types.easeOut,
+    property: LayoutAnimation.Properties.opacity,
+    duration: DURATION_QUICK,
+  },
+};
+
 const REORDER_ANIMATION = {
   duration: DURATION_FAST,
   update: { type: LayoutAnimation.Types.easeOut },
@@ -87,6 +101,8 @@ function Launcher() {
   const [isDefault, setIsDefault] = useState(true);
   const [error, setError] = useState<string>();
   const reduceMotion = useReduceMotion();
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
 
   const scrollY = useRef(new Animated.Value(0)).current;
   const [overflow, setOverflow] = useState(0);
@@ -106,7 +122,22 @@ function Launcher() {
   useEffect(() => {
     let pending: ReturnType<typeof setTimeout>;
 
-    const subscription = LauncherModule.addListener("onAppsChanged", () => {
+    const subscription = LauncherModule.addListener("onAppsChanged", ({ removed }) => {
+      // An uninstall is answered from the list we already hold, the way
+      // Launcher3 removes components rather than reloading its model. Waiting on
+      // a debounce and a full re-query just to delete a row you already know
+      // about is what made this feel slow.
+      if (removed.length) {
+        if (!reduceMotionRef.current) {
+          LayoutAnimation.configureNext(REMOVE_ANIMATION);
+        }
+        setApps((current) =>
+          current.filter((app) => !removed.includes(app.packageName)),
+        );
+        dropPins(removed);
+        return;
+      }
+
       clearTimeout(pending);
       pending = setTimeout(() => loadApps.current(), 250);
     });
@@ -152,6 +183,19 @@ function Launcher() {
   function openAppInfo(packageName: string) {
     LauncherModule.openAppInfo(packageName).catch(showError);
     setOpenRow(undefined);
+  }
+
+  // An uninstalled app must not linger in the persisted pin order.
+  function dropPins(removed: string[]) {
+    setPinned((current) => {
+      const next = current.filter((name) => !removed.includes(name));
+
+      if (next.length !== current.length) {
+        Store.setItem(PINNED_KEY, JSON.stringify(next)).catch(showError);
+      }
+
+      return next;
+    });
   }
 
   // Most recently pinned first, so a freshly pinned app lands at the very top.
