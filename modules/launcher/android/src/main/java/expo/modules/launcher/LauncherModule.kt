@@ -99,6 +99,17 @@ class LauncherModule : Module() {
 
     AsyncFunction("isDefaultLauncher") {
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+
+      // The role system is the authority on which app holds home. Resolving the
+      // home intent and comparing packages reports the caller rather than the
+      // current default, so it answers true even when another launcher is set.
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val roleManager = context.getSystemService(RoleManager::class.java)
+        if (roleManager != null && roleManager.isRoleAvailable(RoleManager.ROLE_HOME)) {
+          return@AsyncFunction roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+        }
+      }
+
       val homeIntent = Intent(Intent.ACTION_MAIN).apply {
         addCategory(Intent.CATEGORY_HOME)
       }
@@ -114,13 +125,6 @@ class LauncherModule : Module() {
       resolved?.activityInfo?.packageName == context.packageName
     }
 
-    AsyncFunction("launchApp") { packageName: String ->
-      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
-      val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-        ?: throw CodedException("No launchable activity found for $packageName")
-      context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }.runOnQueue(Queues.MAIN)
-
     AsyncFunction("openAppInfo") { packageName: String ->
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       val intent = Intent(
@@ -132,19 +136,25 @@ class LauncherModule : Module() {
 
     AsyncFunction("requestHomeRole") {
       val activity = appContext.throwingActivity
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val roleManager = activity.getSystemService(RoleManager::class.java)
-        if (
+      val roleManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        activity.getSystemService(RoleManager::class.java)
+      } else {
+        null
+      }
+      val canRequestRole =
+        roleManager != null &&
           roleManager.isRoleAvailable(RoleManager.ROLE_HOME) &&
           !roleManager.isRoleHeld(RoleManager.ROLE_HOME)
-        ) {
-          @Suppress("DEPRECATION")
-          activity.startActivityForResult(
-            roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME),
-            HOME_ROLE_REQUEST_CODE
-          )
-        }
+
+      if (canRequestRole) {
+        @Suppress("DEPRECATION")
+        activity.startActivityForResult(
+          roleManager!!.createRequestRoleIntent(RoleManager.ROLE_HOME),
+          HOME_ROLE_REQUEST_CODE
+        )
       } else {
+        // No role dialog available, so hand the user the system picker instead
+        // rather than leaving the button doing nothing.
         activity.startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
       }
     }.runOnQueue(Queues.MAIN)
