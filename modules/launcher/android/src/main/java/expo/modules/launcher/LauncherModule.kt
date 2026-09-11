@@ -125,6 +125,13 @@ class LauncherModule : Module() {
       resolved?.activityInfo?.packageName == context.packageName
     }
 
+    AsyncFunction("launchApp") { packageName: String ->
+      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+        ?: throw CodedException("No launchable activity found for $packageName")
+      context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.runOnQueue(Queues.MAIN)
+
     AsyncFunction("openAppInfo") { packageName: String ->
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       val intent = Intent(
