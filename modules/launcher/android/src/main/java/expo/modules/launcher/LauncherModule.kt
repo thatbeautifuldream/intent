@@ -10,7 +10,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.os.UserHandle
+import android.os.UserManager
 import android.provider.Settings
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
@@ -26,7 +28,19 @@ class LauncherModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LauncherModule")
 
-    Events("onAppsChanged")
+    Events("onAppsChanged", "onHomeIntent")
+
+    // Pressing home while the launcher is already showing delivers a fresh home
+    // intent. Every mainstream launcher treats that as "reset to a clean home",
+    // so the UI is told to close what is open and return to the top.
+    OnNewIntent { intent ->
+      val isHome = intent.action == Intent.ACTION_MAIN &&
+        intent.categories?.contains(Intent.CATEGORY_HOME) == true
+
+      if (isHome) {
+        sendEvent("onHomeIntent", emptyMap<String, Any>())
+      }
+    }
 
     // LauncherApps is the launcher-specific channel for install, update and
     // uninstall events, so the list stays accurate without polling.
@@ -76,29 +90,36 @@ class LauncherModule : Module() {
 
     AsyncFunction("getInstalledApps") {
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
-      val packageManager = context.packageManager
-      val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
-        addCategory(Intent.CATEGORY_LAUNCHER)
-      }
-      val activities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        packageManager.queryIntentActivities(
-          launcherIntent,
-          PackageManager.ResolveInfoFlags.of(0)
-        )
-      } else {
-        @Suppress("DEPRECATION")
-        packageManager.queryIntentActivities(launcherIntent, 0)
-      }
+      val service =
+        context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+      val userManager = context.getSystemService(UserManager::class.java)
 
-      activities
-        .filter { it.activityInfo.packageName != context.packageName }
-        .distinctBy { it.activityInfo.packageName }
-        .map { activity ->
+      // getActivityList is the launcher-facing enumeration: it covers the
+      // current user plus any managed profile, and synthesises an entry for
+      // apps that ship no launcher activity of their own. queryIntentActivities
+      // only ever sees the current user, so work apps were invisible.
+      val profiles = userManager?.userProfiles ?: listOf(Process.myUserHandle())
+
+      profiles
+        .flatMap { user ->
+          service.getActivityList(null, user).map { activity -> activity to user }
+        }
+        .filter { (activity, _) ->
+          activity.applicationInfo.packageName != context.packageName
+        }
+        .map { (activity, user) ->
+          val serial = userManager?.getSerialNumberForUser(user)?.toDouble() ?: 0.0
           mapOf(
-            "name" to activity.loadLabel(packageManager).toString(),
-            "packageName" to activity.activityInfo.packageName
+            // A package can exist in both the personal and work profile, so the
+            // component and the user together are what identifies a row.
+            "id" to "${activity.componentName.flattenToString()}#${serial.toLong()}",
+            "name" to activity.label.toString(),
+            "packageName" to activity.applicationInfo.packageName,
+            "component" to activity.componentName.flattenToString(),
+            "user" to serial
           )
         }
+        .distinctBy { it["id"] as String }
         .sortedBy { (it["name"] as String).lowercase(Locale.getDefault()) }
     }
 
@@ -130,20 +151,26 @@ class LauncherModule : Module() {
       resolved?.activityInfo?.packageName == context.packageName
     }
 
-    AsyncFunction("launchApp") { packageName: String ->
+    AsyncFunction("launchApp") { component: String, user: Double ->
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
-      val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-        ?: throw CodedException("No launchable activity found for $packageName")
-      context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      val target = ComponentName.unflattenFromString(component)
+        ?: throw CodedException("Malformed component $component")
+      val service =
+        context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+
+      // startMainActivity launches into the owning profile, which a plain
+      // startActivity cannot do for a work app.
+      service.startMainActivity(target, userFor(context, user), null, null)
     }.runOnQueue(Queues.MAIN)
 
-    AsyncFunction("openAppInfo") { packageName: String ->
+    AsyncFunction("openAppInfo") { component: String, user: Double ->
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
-      val intent = Intent(
-        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-        Uri.fromParts("package", packageName, null)
-      ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      context.startActivity(intent)
+      val target = ComponentName.unflattenFromString(component)
+        ?: throw CodedException("Malformed component $component")
+      val service =
+        context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+
+      service.startAppDetailsActivity(target, userFor(context, user), null, null)
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("requestHomeRole") {
@@ -170,6 +197,11 @@ class LauncherModule : Module() {
         activity.startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
       }
     }.runOnQueue(Queues.MAIN)
+  }
+
+  private fun userFor(context: Context, serial: Double): UserHandle {
+    val userManager = context.getSystemService(UserManager::class.java)
+    return userManager?.getUserForSerialNumber(serial.toLong()) ?: Process.myUserHandle()
   }
 
   private companion object {

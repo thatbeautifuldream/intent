@@ -4,13 +4,14 @@ import type { InstalledApp } from "./LauncherModule.types";
 
 type LauncherEvents = {
   onAppsChanged(payload: { removed: string[] }): void;
+  onHomeIntent(): void;
 };
 
 declare class LauncherModule extends NativeModule<LauncherEvents> {
   getInstalledApps(): Promise<InstalledApp[]>;
   isDefaultLauncher(): Promise<boolean>;
-  launchApp(packageName: string): Promise<void>;
-  openAppInfo(packageName: string): Promise<void>;
+  launchApp(component: string, user: number): Promise<void>;
+  openAppInfo(component: string, user: number): Promise<void>;
   requestHomeRole(): Promise<void>;
 }
 

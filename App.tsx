@@ -81,7 +81,7 @@ const ACTION_WIDTH = ACTION_INSET * 2 + ACTION_SIZE * ACTION_COUNT;
 const SWIPE_THRESHOLD = ACTION_WIDTH / 2;
 
 const AnimatedFlatList = Animated.FlatList as unknown as React.ComponentType<
-  FlatListProps<InstalledApp>
+  FlatListProps<InstalledApp> & { ref?: React.Ref<FlatList<InstalledApp>> }
 >;
 const AnimatedGradient = Animated.createAnimatedComponent(LinearGradient);
 
@@ -98,6 +98,7 @@ function Launcher() {
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [pinned, setPinned] = useState<string[]>([]);
   const [openRow, setOpenRow] = useState<string>();
+  const listRef = useRef<FlatList<InstalledApp> | null>(null);
   const [isDefault, setIsDefault] = useState(true);
   const [error, setError] = useState<string>();
   const reduceMotion = useReduceMotion();
@@ -131,10 +132,13 @@ function Launcher() {
         if (!reduceMotionRef.current) {
           LayoutAnimation.configureNext(REMOVE_ANIMATION);
         }
-        setApps((current) =>
-          current.filter((app) => !removed.includes(app.packageName)),
-        );
-        dropPins(removed);
+        setApps((current) => {
+          const gone = current.filter((app) =>
+            removed.includes(app.packageName),
+          );
+          dropPins(gone.map((app) => app.id));
+          return current.filter((app) => !removed.includes(app.packageName));
+        });
         return;
       }
 
@@ -146,6 +150,21 @@ function Launcher() {
       clearTimeout(pending);
       subscription.remove();
     };
+  }, []);
+
+  // Home means "a clean home screen": nothing left open, back at the top.
+  useEffect(() => {
+    const subscription = LauncherModule.addListener("onHomeIntent", () => {
+      setOpenRow(undefined);
+
+      const list = listRef.current as unknown as {
+        scrollToOffset?: (options: { offset: number; animated: boolean }) => void;
+      } | null;
+
+      list?.scrollToOffset?.({ offset: 0, animated: true });
+    });
+
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {
@@ -171,8 +190,8 @@ function Launcher() {
     setError(reason instanceof Error ? reason.message : String(reason));
   }
 
-  function launchApp(packageName: string) {
-    LauncherModule.launchApp(packageName).catch((reason) => {
+  function launchApp(app: InstalledApp) {
+    LauncherModule.launchApp(app.component, app.user).catch((reason) => {
       // A row that will not launch is a stale entry, so rebuild the list rather
       // than leaving the user tapping something that cannot work.
       loadApps.current();
@@ -180,15 +199,15 @@ function Launcher() {
     });
   }
 
-  function openAppInfo(packageName: string) {
-    LauncherModule.openAppInfo(packageName).catch(showError);
+  function openAppInfo(app: InstalledApp) {
+    LauncherModule.openAppInfo(app.component, app.user).catch(showError);
     setOpenRow(undefined);
   }
 
   // An uninstalled app must not linger in the persisted pin order.
-  function dropPins(removed: string[]) {
+  function dropPins(ids: string[]) {
     setPinned((current) => {
-      const next = current.filter((name) => !removed.includes(name));
+      const next = current.filter((id) => !ids.includes(id));
 
       if (next.length !== current.length) {
         Store.setItem(PINNED_KEY, JSON.stringify(next)).catch(showError);
@@ -199,10 +218,10 @@ function Launcher() {
   }
 
   // Most recently pinned first, so a freshly pinned app lands at the very top.
-  function togglePin(packageName: string) {
-    const next = pinned.includes(packageName)
-      ? pinned.filter((name) => name !== packageName)
-      : [packageName, ...pinned];
+  function togglePin(id: string) {
+    const next = pinned.includes(id)
+      ? pinned.filter((pinnedId) => pinnedId !== id)
+      : [id, ...pinned];
 
     if (!reduceMotion) {
       LayoutAnimation.configureNext(REORDER_ANIMATION);
@@ -268,11 +287,11 @@ function Launcher() {
     : 0;
 
   const ordered = useMemo(() => {
-    const byPackage = new Map(apps.map((app) => [app.packageName, app]));
+    const byId = new Map(apps.map((app) => [app.id, app]));
     const top = pinned
-      .map((packageName) => byPackage.get(packageName))
+      .map((id) => byId.get(id))
       .filter((app): app is InstalledApp => Boolean(app));
-    const rest = apps.filter((app) => !pinned.includes(app.packageName));
+    const rest = apps.filter((app) => !pinned.includes(app.id));
 
     return [...top, ...rest];
   }, [apps, pinned]);
@@ -291,8 +310,14 @@ function Launcher() {
       />
 
       <AnimatedFlatList
+        ref={(instance: unknown) => {
+          const node = instance as
+            | (FlatList<InstalledApp> & { getNode?: () => FlatList<InstalledApp> })
+            | null;
+          listRef.current = node?.getNode?.() ?? node;
+        }}
         data={ordered}
-        keyExtractor={(app) => app.packageName}
+        keyExtractor={(app) => app.id}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           paddingTop: insets.top + 24,
@@ -306,13 +331,13 @@ function Launcher() {
           <AppRow
             name={item.name}
             reduceMotion={reduceMotion}
-            isPinned={pinned.includes(item.packageName)}
-            isOpen={openRow === item.packageName}
-            onOpen={() => setOpenRow(item.packageName)}
+            isPinned={pinned.includes(item.id)}
+            isOpen={openRow === item.id}
+            onOpen={() => setOpenRow(item.id)}
             onClose={() => setOpenRow(undefined)}
-            onPin={() => togglePin(item.packageName)}
-            onInfo={() => openAppInfo(item.packageName)}
-            onPress={() => launchApp(item.packageName)}
+            onPin={() => togglePin(item.id)}
+            onInfo={() => openAppInfo(item)}
+            onPress={() => launchApp(item)}
           />
         )}
       />
