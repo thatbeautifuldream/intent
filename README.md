@@ -4,6 +4,14 @@ A text-only Android launcher. No icons, no widgets, no grid — every app you op
 
 Built with Expo SDK 57, React Native, and a local Kotlin module.
 
+| Every app, alphabetical | Swipe a row right | Pinned to the top |
+| --- | --- | --- |
+| ![App list](assets/screenshots/list.png) | ![Row actions](assets/screenshots/actions.png) | ![Pinned app](assets/screenshots/pinned.png) |
+
+## Download
+
+Grab the latest APK from [Releases](https://github.com/thatbeautifuldream/intent/releases).
+
 ## Run on a physical device
 
 Install JDK 21, enable USB debugging, connect the device, and verify that `adb devices` lists it.
